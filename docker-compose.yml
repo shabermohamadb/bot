@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: raidmaster-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: raidmaster
+      POSTGRES_PASSWORD: raidmaster_secure_password
+      POSTGRES_DB: raidmaster
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  bot:
+    build: .
+    container_name: raidmaster-bot
+    restart: always
+    depends_on:
+      - db
+    environment:
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID}
+      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID}
+      DATABASE_URL: "postgresql://raidmaster:raidmaster_secure_password@db:5432/raidmaster?schema=public"
+      BOT_PREFIX: "!"
+      BOT_NAME_ALIAS: "Raid master"
+      LOG_LEVEL: "info"
+      NODE_ENV: "production"
+
+volumes:
+  postgres_data:

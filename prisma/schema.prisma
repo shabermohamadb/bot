@@ -1,0 +1,93 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Party {
+  id                      String              @id @default(cuid())
+  guildId                 String
+  organizerId             String
+  announcementChannelId   String
+  announcementMessageId   String?
+  threadId                String?
+  title                   String?
+  ipRequirement           Int
+  activityType            String              // AVA, Outlands, Both
+  foodCount               Int
+  foodRequirementScope    String              // Per Player, Per Party
+  durationMinutes         Int
+  minimumTrackingToolkit  Int
+  sideTracking            String              // Enabled, Disabled, Not Specified
+  header                  String?
+  footer                  String?
+  status                  String              @default("OPEN") // OPEN, CLOSED, CANCELLED
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
+  closedAt                DateTime?
+
+  roles                   PartyRole[]
+  registrations           PartyRegistration[]
+  auditLogs               AuditLog[]
+
+  @@index([guildId])
+  @@index([threadId])
+  @@index([status])
+}
+
+model PartyRole {
+  id            String              @id @default(cuid())
+  partyId       String
+  party         Party               @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  roleNumber    Int
+  roleName      String
+  capacity      Int
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  registrations PartyRegistration[]
+
+  @@unique([partyId, roleNumber])
+  @@index([partyId])
+}
+
+model PartyRegistration {
+  id           String    @id @default(cuid())
+  partyId      String
+  party        Party     @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  roleId       String
+  role         PartyRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  userId       String
+  registeredAt DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([partyId, userId])
+  @@index([partyId, roleId])
+}
+
+model AuditLog {
+  id            String   @id @default(cuid())
+  guildId       String
+  partyId       String?
+  party         Party?   @relation(fields: [partyId], references: [id], onDelete: SetNull)
+  actorId       String
+  action        String
+  previousValue String?
+  newValue      String?
+  createdAt     DateTime @default(now())
+
+  @@index([guildId])
+  @@index([partyId])
+}
+
+model GuildConfig {
+  guildId                       String   @id
+  defaultAnnouncementChannelId String?
+  organizerRoleId               String?
+  botAlias                      String?
+  createdAt                     DateTime @default(now())
+  updatedAt                     DateTime @updatedAt
+}

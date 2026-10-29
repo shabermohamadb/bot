@@ -1,0 +1,41 @@
+{
+  "name": "discord-raid-master",
+  "version": "1.0.0",
+  "description": "Discord Raid Master Bot for Albion Online AVA and Outlands party organization and role registration",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:push": "prisma db push"
+  },
+  "keywords": [
+    "discord-bot",
+    "albion-online",
+    "raid-master",
+    "party-organizer",
+    "discord-js"
+  ],
+  "author": "Antigravity",
+  "license": "MIT",
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "discord.js": "^14.18.0",
+    "dotenv": "^16.4.7",
+    "pino": "^9.6.0",
+    "pino-pretty": "^13.0.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "prisma": "^5.22.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}
+
