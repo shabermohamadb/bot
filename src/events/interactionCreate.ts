@@ -1,9 +1,10 @@
 import { Interaction } from 'discord.js';
 import { executePartyCommand } from '../commands/party';
 import {
-  handleWizardButton,
-  handleWizardSelect,
-  handleWizardModalSubmit,
+  handleCreateModalSubmit,
+  handleRolesModalSubmit,
+  handleCreateSelect,
+  handleCreateButton,
 } from '../commands/party/create';
 import { handleEditModalSubmit } from '../commands/party/edit';
 import { handleCancelButton } from '../commands/party/cancel';
@@ -22,16 +23,23 @@ export async function handleInteractionCreate(interaction: Interaction): Promise
 
     // 2. Select Menus
     if (interaction.isStringSelectMenu()) {
-      if (interaction.customId.startsWith('wizard_select_')) {
-        await handleWizardSelect(interaction);
+      if (
+        interaction.customId === 'create_select_activity' ||
+        interaction.customId === 'create_select_side_tracking'
+      ) {
+        await handleCreateSelect(interaction);
       }
       return;
     }
 
     // 3. Buttons
     if (interaction.isButton()) {
-      if (interaction.customId.startsWith('wizard_btn_')) {
-        await handleWizardButton(interaction);
+      if (
+        interaction.customId === 'create_btn_edit_roles' ||
+        interaction.customId === 'create_btn_submit' ||
+        interaction.customId === 'create_btn_cancel'
+      ) {
+        await handleCreateButton(interaction);
       } else if (
         interaction.customId.startsWith('cancel_confirm:') ||
         interaction.customId.startsWith('cancel_abort:')
@@ -43,8 +51,10 @@ export async function handleInteractionCreate(interaction: Interaction): Promise
 
     // 4. Modal Submissions
     if (interaction.isModalSubmit()) {
-      if (interaction.customId.startsWith('wizard_modal_')) {
-        await handleWizardModalSubmit(interaction);
+      if (interaction.customId.startsWith('create_party_modal:')) {
+        await handleCreateModalSubmit(interaction);
+      } else if (interaction.customId === 'create_modal_roles') {
+        await handleRolesModalSubmit(interaction);
       } else if (interaction.customId.startsWith('edit_party_modal:')) {
         await handleEditModalSubmit(interaction);
       }
@@ -68,4 +78,3 @@ export async function handleInteractionCreate(interaction: Interaction): Promise
     }
   }
 }
-

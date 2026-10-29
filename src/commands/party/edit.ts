@@ -56,14 +56,6 @@ export async function handlePartyEdit(interaction: ChatInputCommandInteraction):
     .setCustomId(`edit_party_modal:${party.id}`)
     .setTitle(`Edit Party: ${party.activityType}`);
 
-  const titleInput = new TextInputBuilder()
-    .setCustomId('title')
-    .setLabel('Party Title / Header')
-    .setStyle(TextInputStyle.Short)
-    .setValue(party.title || '')
-    .setRequired(false)
-    .setMaxLength(100);
-
   const ipInput = new TextInputBuilder()
     .setCustomId('ip_requirement')
     .setLabel('Minimum IP Requirement')
@@ -73,16 +65,23 @@ export async function handlePartyEdit(interaction: ChatInputCommandInteraction):
 
   const durationInput = new TextInputBuilder()
     .setCustomId('duration')
-    .setLabel('Duration (e.g. 2 hours or 120 mins)')
+    .setLabel('Duration of Run (e.g. 2 hours)')
     .setStyle(TextInputStyle.Short)
     .setValue(`${party.durationMinutes} mins`)
     .setRequired(true);
 
   const foodsInput = new TextInputBuilder()
     .setCustomId('foods')
-    .setLabel('Food Count')
+    .setLabel('Number of Foods (per player)')
     .setStyle(TextInputStyle.Short)
     .setValue(party.foodCount.toString())
+    .setRequired(true);
+
+  const toolkitInput = new TextInputBuilder()
+    .setCustomId('toolkit')
+    .setLabel('Minimum Tracking Toolkit')
+    .setStyle(TextInputStyle.Short)
+    .setValue(party.minimumTrackingToolkit.toString())
     .setRequired(true);
 
   const rolesInput = new TextInputBuilder()
@@ -93,10 +92,10 @@ export async function handlePartyEdit(interaction: ChatInputCommandInteraction):
     .setRequired(false);
 
   modal.addComponents(
-    new ActionRowBuilder<TextInputBuilder>().addComponents(titleInput),
     new ActionRowBuilder<TextInputBuilder>().addComponents(ipInput),
-    new ActionRowBuilder<TextInputBuilder>().addComponents(durationInput),
     new ActionRowBuilder<TextInputBuilder>().addComponents(foodsInput),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(durationInput),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(toolkitInput),
     new ActionRowBuilder<TextInputBuilder>().addComponents(rolesInput)
   );
 
@@ -129,10 +128,10 @@ export async function handleEditModalSubmit(interaction: ModalSubmitInteraction)
     return;
   }
 
-  const title = interaction.fields.getTextInputValue('title') || null;
   const ipStr = interaction.fields.getTextInputValue('ip_requirement');
   const durationStr = interaction.fields.getTextInputValue('duration');
   const foodsStr = interaction.fields.getTextInputValue('foods');
+  const toolkitStr = interaction.fields.getTextInputValue('toolkit');
   const rolesStr = interaction.fields.getTextInputValue('roles');
 
   try {
@@ -147,15 +146,21 @@ export async function handleEditModalSubmit(interaction: ModalSubmitInteraction)
       throw new Error('Food count must be a non-negative number.');
     }
 
+    const minimumTrackingToolkit = parseInt(toolkitStr, 10);
+    if (isNaN(minimumTrackingToolkit) || minimumTrackingToolkit < 0) {
+      throw new Error('Tracking toolkit must be a non-negative number.');
+    }
+
     const roles = rolesStr ? parseRolesString(rolesStr) : undefined;
 
     const updated = await editParty(
       party.id,
       {
-        title,
+        title: `${party.activityType} Party — ${ipRequirement}+ IP`,
         ipRequirement,
         durationMinutes,
         foodCount,
+        minimumTrackingToolkit,
         roles,
       },
       interaction.user.id,

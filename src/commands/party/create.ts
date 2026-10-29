@@ -1,23 +1,23 @@
 import {
   ChatInputCommandInteraction,
+  ModalSubmitInteraction,
   ButtonInteraction,
   StringSelectMenuInteraction,
-  ModalSubmitInteraction,
-  EmbedBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
   StringSelectMenuBuilder,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
+  EmbedBuilder,
   Colors,
   TextChannel,
   NewsChannel,
+  ThreadChannel,
 } from 'discord.js';
 import {
   ActivityType,
-  FoodRequirementScope,
   SideTracking,
   PartyRoleInput,
   DEFAULT_ALBION_ROLES,
@@ -31,31 +31,96 @@ import { formatDuration } from '../../services/embedService';
 import { handleDiscordAPIError } from '../../utils/discordErrors';
 import { logger } from '../../utils/logger';
 
-export interface DraftParty {
+export interface PartyDraftState {
   guildId: string;
   organizerId: string;
   announcementChannelId: string;
-  title: string;
-  header: string;
-  footer: string;
-  threadName: string;
   ipRequirement: number;
-  activityType: ActivityType;
-  foodCount: number;
-  foodRequirementScope: FoodRequirementScope;
   durationMinutes: number;
+  foodCount: number;
   minimumTrackingToolkit: number;
+  threadName: string;
+  activityType: ActivityType;
   sideTracking: SideTracking;
   roles: PartyRoleInput[];
 }
 
-export const activeDrafts = new Map<string, DraftParty>();
+export const activeDrafts = new Map<string, PartyDraftState>();
 
 export function getDraftKey(userId: string, guildId: string): string {
   return `${guildId}:${userId}`;
 }
 
-export function buildWizardEmbed(draft: DraftParty): EmbedBuilder {
+/**
+ * Builds the native "Create Party" modal opened immediately when running /party create.
+ * Replaces Party Header & Party Footer with Albion Online party fields.
+ */
+export function buildCreatePartyModal(targetChannelId: string): ModalBuilder {
+  const modal = new ModalBuilder()
+    .setCustomId(`create_party_modal:${targetChannelId}`)
+    .setTitle('Create Party');
+
+  // 1. IP Requirement
+  const ipInput = new TextInputBuilder()
+    .setCustomId('ip_requirement')
+    .setLabel('Minimum IP Requirement')
+    .setPlaceholder('e.g. 1500')
+    .setValue('1500')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true);
+
+  // 2. Number of Foods
+  const foodsInput = new TextInputBuilder()
+    .setCustomId('foods')
+    .setLabel('Number of Foods (per player)')
+    .setPlaceholder('e.g. 2')
+    .setValue('2')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true);
+
+  // 3. Duration of Run
+  const durationInput = new TextInputBuilder()
+    .setCustomId('duration')
+    .setLabel('Duration of Run')
+    .setPlaceholder('e.g. 2 hours or 120 mins')
+    .setValue('2 hours')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true);
+
+  // 4. Minimum Tracking Toolkit
+  const toolkitInput = new TextInputBuilder()
+    .setCustomId('toolkit')
+    .setLabel('Minimum Tracking Toolkit')
+    .setPlaceholder('e.g. 5')
+    .setValue('5')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true);
+
+  // 5. Thread Name
+  const threadInput = new TextInputBuilder()
+    .setCustomId('thread_name')
+    .setLabel('Registration Thread Name')
+    .setPlaceholder('e.g. AVA 1500+ Registration')
+    .setValue('AVA 1500+ Registration')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setMaxLength(100);
+
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(ipInput),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(foodsInput),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(durationInput),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(toolkitInput),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(threadInput)
+  );
+
+  return modal;
+}
+
+/**
+ * Builds the private ephemeral embed showing the entered fields and final controls.
+ */
+export function buildDraftReviewEmbed(draft: PartyDraftState): EmbedBuilder {
   const rolesList = draft.roles
     .sort((a, b) => a.roleNumber - b.roleNumber)
     .map((r) => `\`${r.roleNumber}\` — **${r.roleName}** (${r.capacity} slot${r.capacity > 1 ? 's' : ''})`)
@@ -64,94 +129,71 @@ export function buildWizardEmbed(draft: DraftParty): EmbedBuilder {
   const totalSlots = draft.roles.reduce((acc, r) => acc + r.capacity, 0);
 
   return new EmbedBuilder()
-    .setTitle('🛠️ Party Creation Wizard')
-    .setColor(Colors.Blue)
+    .setTitle('📋 Party Configuration — Finalize Setup')
+    .setColor(Colors.Gold)
     .setDescription(
-      `Configure your Albion Online party details below. Use the dropdowns and buttons to customize, then click **Publish Party**.`
+      `Your party details are saved. Select **Activity Type** and **Side Tracking** if different, then click **Create Party**.`
     )
     .addFields([
       {
-        name: '📋 Requirements & Details',
+        name: '⚔️ Requirements & Settings',
         value: [
-          `**Title:** ${draft.title || '*(Default)*'}`,
-          `**Activity:** ${draft.activityType}`,
-          `**Minimum IP:** ${draft.ipRequirement}`,
-          `**Foods:** ${draft.foodCount} (${draft.foodRequirementScope})`,
-          `**Duration:** ${formatDuration(draft.durationMinutes)}`,
-          `**Tracking Toolkit:** ${draft.minimumTrackingToolkit}`,
-          `**Side Tracking:** ${draft.sideTracking}`,
-          `**Thread Name:** ${draft.threadName}`,
-          `**Channel:** <#${draft.announcementChannelId}>`,
+          `• **Minimum IP:** ${draft.ipRequirement}`,
+          `• **Number of Foods:** ${draft.foodCount} (Per Player)`,
+          `• **Duration:** ${formatDuration(draft.durationMinutes)}`,
+          `• **Tracking Toolkit:** ${draft.minimumTrackingToolkit}`,
+          `• **Thread Name:** ${draft.threadName}`,
+          `• **Activity Type:** **${draft.activityType}**`,
+          `• **Side Tracking:** **${draft.sideTracking}**`,
+          `• **Announcement Channel:** <#${draft.announcementChannelId}>`,
         ].join('\n'),
         inline: false,
       },
       {
-        name: `👥 Roles (${totalSlots} Total Slots)`,
+        name: `👥 Configured Roles (${totalSlots} Slots)`,
         value: rolesList || 'None',
         inline: false,
       },
-      {
-        name: '📝 Header & Footer',
-        value: [
-          `**Header:** ${draft.header || '*(None)*'}`,
-          `**Footer:** ${draft.footer || '*(None)*'}`,
-        ].join('\n'),
-        inline: false,
-      },
     ])
-    .setFooter({ text: 'Raid Master • Ephemeral Configuration Wizard' });
+    .setFooter({ text: 'Private Configuration • Visible only to organizer' });
 }
 
-export function buildWizardComponents(): ActionRowBuilder<any>[] {
-  // Row 1: Activity select menu
+export function buildDraftReviewComponents(draft: PartyDraftState): ActionRowBuilder<any>[] {
+  // Activity Type select menu
   const activityMenu = new StringSelectMenuBuilder()
-    .setCustomId('wizard_select_activity')
-    .setPlaceholder('Select Activity Type...')
+    .setCustomId('create_select_activity')
+    .setPlaceholder(`Activity: ${draft.activityType}`)
     .addOptions([
-      { label: 'AVA (Avalonian Dungeon)', value: 'AVA', emoji: '⚔️' },
-      { label: 'Outlands Roam / Gank', value: 'Outlands', emoji: '🌲' },
-      { label: 'Both (AVA & Outlands)', value: 'Both', emoji: '🛡️' },
+      { label: 'AVA (Avalonian Dungeon)', value: 'AVA', emoji: '⚔️', default: draft.activityType === 'AVA' },
+      { label: 'Outlands Roam / Gank', value: 'Outlands', emoji: '🌲', default: draft.activityType === 'Outlands' },
+      { label: 'Both (AVA & Outlands)', value: 'Both', emoji: '🛡️', default: draft.activityType === 'Both' },
     ]);
 
-  // Row 2: Side Tracking & Food Scope select menus
+  // Side Tracking select menu
   const sideTrackingMenu = new StringSelectMenuBuilder()
-    .setCustomId('wizard_select_side_tracking')
-    .setPlaceholder('Side Tracking Setting...')
+    .setCustomId('create_select_side_tracking')
+    .setPlaceholder(`Side Tracking: ${draft.sideTracking}`)
     .addOptions([
-      { label: 'Side Tracking: Enabled', value: 'Enabled', emoji: '✅' },
-      { label: 'Side Tracking: Disabled', value: 'Disabled', emoji: '❌' },
-      { label: 'Side Tracking: Not Specified', value: 'Not Specified', emoji: '❔' },
+      { label: 'Side Tracking: Enabled', value: 'Enabled', emoji: '✅', default: draft.sideTracking === 'Enabled' },
+      { label: 'Side Tracking: Disabled', value: 'Disabled', emoji: '❌', default: draft.sideTracking === 'Disabled' },
+      { label: 'Side Tracking: Not Specified', value: 'Not Specified', emoji: '❔', default: draft.sideTracking === 'Not Specified' },
     ]);
 
-  // Row 3: Buttons for Modals
-  const modalButtonsRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+  // Action buttons
+  const buttonsRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId('wizard_btn_details')
-      .setLabel('Edit Numbers & Thread')
-      .setStyle(ButtonStyle.Secondary)
-      .setEmoji('📝'),
-    new ButtonBuilder()
-      .setCustomId('wizard_btn_roles')
-      .setLabel('Configure Roles')
+      .setCustomId('create_btn_edit_roles')
+      .setLabel('Edit Roles')
       .setStyle(ButtonStyle.Secondary)
       .setEmoji('👥'),
     new ButtonBuilder()
-      .setCustomId('wizard_btn_text')
-      .setLabel('Title & Header')
-      .setStyle(ButtonStyle.Secondary)
-      .setEmoji('🏷️')
-  );
-
-  // Row 4: Final Publish & Cancel Buttons
-  const actionButtonsRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId('wizard_btn_publish')
-      .setLabel('Publish Party')
+      .setCustomId('create_btn_submit')
+      .setLabel('Create Party')
       .setStyle(ButtonStyle.Success)
       .setEmoji('🚀'),
     new ButtonBuilder()
-      .setCustomId('wizard_btn_cancel')
-      .setLabel('Discard')
+      .setCustomId('create_btn_cancel')
+      .setLabel('Cancel')
       .setStyle(ButtonStyle.Danger)
       .setEmoji('✖️')
   );
@@ -159,94 +201,143 @@ export function buildWizardComponents(): ActionRowBuilder<any>[] {
   return [
     new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(activityMenu),
     new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(sideTrackingMenu),
-    modalButtonsRow,
-    actionButtonsRow,
+    buttonsRow,
   ];
 }
 
+/**
+ * /party create command entry point.
+ * Directly opens the native "Create Party" modal without prior channel messages.
+ */
 export async function handlePartyCreate(interaction: ChatInputCommandInteraction): Promise<void> {
-  const guildId = interaction.guildId!;
-  const userId = interaction.user.id;
   const targetChannel = interaction.options.getChannel('channel') || interaction.channel;
 
-  if (!targetChannel || !(targetChannel instanceof TextChannel || targetChannel instanceof NewsChannel)) {
+  let announcementChannelId = interaction.channelId;
+  if (targetChannel instanceof TextChannel || targetChannel instanceof NewsChannel) {
+    announcementChannelId = targetChannel.id;
+  } else if (targetChannel instanceof ThreadChannel && targetChannel.parentId) {
+    announcementChannelId = targetChannel.parentId;
+  }
+
+  // Open native Discord modal directly
+  const modal = buildCreatePartyModal(announcementChannelId);
+  await interaction.showModal(modal);
+}
+
+/**
+ * Handles submission of the primary "Create Party" modal.
+ */
+export async function handleCreateModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
+  const guildId = interaction.guildId!;
+  const userId = interaction.user.id;
+  const targetChannelId = interaction.customId.split(':')[1] || interaction.channelId || '';
+
+  const ipStr = interaction.fields.getTextInputValue('ip_requirement');
+  const foodsStr = interaction.fields.getTextInputValue('foods');
+  const durationStr = interaction.fields.getTextInputValue('duration');
+  const toolkitStr = interaction.fields.getTextInputValue('toolkit');
+  const threadName = interaction.fields.getTextInputValue('thread_name').trim();
+
+  try {
+    const ipRequirement = parseInt(ipStr, 10);
+    if (isNaN(ipRequirement) || ipRequirement < 0) {
+      throw new Error('IP requirement must be a valid non-negative number.');
+    }
+
+    const foodCount = parseInt(foodsStr, 10);
+    if (isNaN(foodCount) || foodCount < 0) {
+      throw new Error('Food count must be a valid non-negative number.');
+    }
+
+    const durationMinutes = parseDurationString(durationStr);
+
+    const minimumTrackingToolkit = parseInt(toolkitStr, 10);
+    if (isNaN(minimumTrackingToolkit) || minimumTrackingToolkit < 0) {
+      throw new Error('Tracking toolkit must be a valid non-negative number.');
+    }
+
+    if (!threadName) {
+      throw new Error('Thread name cannot be empty.');
+    }
+
+    // Preserve entered state in draft
+    const draft: PartyDraftState = {
+      guildId,
+      organizerId: userId,
+      announcementChannelId: targetChannelId,
+      ipRequirement,
+      durationMinutes,
+      foodCount,
+      minimumTrackingToolkit,
+      threadName,
+      activityType: 'AVA',
+      sideTracking: 'Enabled',
+      roles: [...DEFAULT_ALBION_ROLES],
+    };
+
+    activeDrafts.set(getDraftKey(userId, guildId), draft);
+
+    const embed = buildDraftReviewEmbed(draft);
+    const components = buildDraftReviewComponents(draft);
+
+    // Keep configuration private to organizer (ephemeral)
     await interaction.reply({
-      content: '❌ Please choose or run this command in a text channel where the party announcement can be posted.',
+      embeds: [embed],
+      components,
+      ephemeral: true,
+    });
+  } catch (error: any) {
+    await interaction.reply({
+      content: `❌ **Form Error:** ${error.message}`,
+      ephemeral: true,
+    });
+  }
+}
+
+/**
+ * Handles select menus for Activity Type & Side Tracking.
+ */
+export async function handleCreateSelect(interaction: StringSelectMenuInteraction): Promise<void> {
+  const key = getDraftKey(interaction.user.id, interaction.guildId!);
+  const draft = activeDrafts.get(key);
+
+  if (!draft) {
+    await interaction.reply({
+      content: '❌ Party configuration session expired. Please run `/party create` again.',
       ephemeral: true,
     });
     return;
   }
 
-  // Pre-fill with optional slash command options if user provided any
-  const ipOpt = interaction.options.getInteger('ip_requirement') ?? 1500;
-  const activityOpt = (interaction.options.getString('activity') as ActivityType) ?? 'AVA';
-  const durationOpt = interaction.options.getString('duration');
-  const durationMinutes = durationOpt ? parseDurationString(durationOpt) : 120;
-  const threadNameOpt = interaction.options.getString('thread_name') ?? `${activityOpt} ${ipOpt}+ Registration`;
-
-  const draft: DraftParty = {
-    guildId,
-    organizerId: userId,
-    announcementChannelId: targetChannel.id,
-    title: `${activityOpt} Party — ${ipOpt}+ IP`,
-    header: 'Sign up for the upcoming party run! Be geared and ready in Discord.',
-    footer: 'Please join the voice channel 10 minutes prior to run departure.',
-    threadName: threadNameOpt,
-    ipRequirement: ipOpt,
-    activityType: activityOpt,
-    foodCount: 2,
-    foodRequirementScope: 'Per Player',
-    durationMinutes,
-    minimumTrackingToolkit: 5,
-    sideTracking: 'Enabled',
-    roles: [...DEFAULT_ALBION_ROLES],
-  };
-
-  activeDrafts.set(getDraftKey(userId, guildId), draft);
-
-  const embed = buildWizardEmbed(draft);
-  const components = buildWizardComponents();
-
-  await interaction.reply({
-    embeds: [embed],
-    components,
-    ephemeral: true,
-  });
-}
-
-export async function handleWizardSelect(interaction: StringSelectMenuInteraction): Promise<void> {
-  const key = getDraftKey(interaction.user.id, interaction.guildId!);
-  const draft = activeDrafts.get(key);
-
-  if (!draft) {
-    await interaction.reply({ content: '❌ Wizard session expired. Please run `/party create` again.', ephemeral: true });
-    return;
-  }
-
   const selected = interaction.values[0];
 
-  if (interaction.customId === 'wizard_select_activity') {
+  if (interaction.customId === 'create_select_activity') {
     draft.activityType = selected as ActivityType;
-    draft.title = `${draft.activityType} Party — ${draft.ipRequirement}+ IP`;
-    draft.threadName = `${draft.activityType} ${draft.ipRequirement}+ Registration`;
-  } else if (interaction.customId === 'wizard_select_side_tracking') {
+  } else if (interaction.customId === 'create_select_side_tracking') {
     draft.sideTracking = selected as SideTracking;
   }
 
-  const embed = buildWizardEmbed(draft);
-  await interaction.update({ embeds: [embed] });
+  const embed = buildDraftReviewEmbed(draft);
+  const components = buildDraftReviewComponents(draft);
+  await interaction.update({ embeds: [embed], components });
 }
 
-export async function handleWizardButton(interaction: ButtonInteraction): Promise<void> {
+/**
+ * Handles action buttons: Edit Roles, Create Party, Cancel.
+ */
+export async function handleCreateButton(interaction: ButtonInteraction): Promise<void> {
   const key = getDraftKey(interaction.user.id, interaction.guildId!);
   const draft = activeDrafts.get(key);
 
-  if (!draft && interaction.customId !== 'wizard_btn_cancel') {
-    await interaction.reply({ content: '❌ Wizard session expired. Please run `/party create` again.', ephemeral: true });
+  if (!draft && interaction.customId !== 'create_btn_cancel') {
+    await interaction.reply({
+      content: '❌ Party configuration session expired. Please run `/party create` again.',
+      ephemeral: true,
+    });
     return;
   }
 
-  if (interaction.customId === 'wizard_btn_cancel') {
+  if (interaction.customId === 'create_btn_cancel') {
     activeDrafts.delete(key);
     await interaction.update({
       content: '❌ Party creation cancelled.',
@@ -258,63 +349,11 @@ export async function handleWizardButton(interaction: ButtonInteraction): Promis
 
   if (!draft) return;
 
-  if (interaction.customId === 'wizard_btn_details') {
+  // Open modal to customize roles
+  if (interaction.customId === 'create_btn_edit_roles') {
     const modal = new ModalBuilder()
-      .setCustomId('wizard_modal_details')
-      .setTitle('Party Numbers & Thread');
-
-    modal.addComponents(
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId('ip_requirement')
-          .setLabel('Minimum IP Requirement')
-          .setStyle(TextInputStyle.Short)
-          .setValue(draft.ipRequirement.toString())
-          .setRequired(true)
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId('duration')
-          .setLabel('Duration (e.g. 2 hours or 120 mins)')
-          .setStyle(TextInputStyle.Short)
-          .setValue(`${draft.durationMinutes} mins`)
-          .setRequired(true)
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId('foods')
-          .setLabel('Food Count per Player')
-          .setStyle(TextInputStyle.Short)
-          .setValue(draft.foodCount.toString())
-          .setRequired(true)
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId('toolkit')
-          .setLabel('Min Tracking Toolkit Count')
-          .setStyle(TextInputStyle.Short)
-          .setValue(draft.minimumTrackingToolkit.toString())
-          .setRequired(true)
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId('thread_name')
-          .setLabel('Registration Thread Name')
-          .setStyle(TextInputStyle.Short)
-          .setValue(draft.threadName)
-          .setRequired(true)
-          .setMaxLength(100)
-      )
-    );
-
-    await interaction.showModal(modal);
-    return;
-  }
-
-  if (interaction.customId === 'wizard_btn_roles') {
-    const modal = new ModalBuilder()
-      .setCustomId('wizard_modal_roles')
-      .setTitle('Configure Party Roles');
+      .setCustomId('create_modal_roles')
+      .setTitle('Party Roles & Capacities');
 
     const rolesString = draft.roles
       .sort((a, b) => a.roleNumber - b.roleNumber)
@@ -336,48 +375,24 @@ export async function handleWizardButton(interaction: ButtonInteraction): Promis
     return;
   }
 
-  if (interaction.customId === 'wizard_btn_text') {
-    const modal = new ModalBuilder()
-      .setCustomId('wizard_modal_text')
-      .setTitle('Title, Header & Footer');
+  // Final submission and party publication
+  if (interaction.customId === 'create_btn_submit') {
+    const validation = CreatePartySchema.safeParse({
+      guildId: draft.guildId,
+      organizerId: draft.organizerId,
+      announcementChannelId: draft.announcementChannelId,
+      title: `${draft.activityType} Party — ${draft.ipRequirement}+ IP`,
+      threadName: draft.threadName,
+      ipRequirement: draft.ipRequirement,
+      activityType: draft.activityType,
+      foodCount: draft.foodCount,
+      foodRequirementScope: 'Per Player',
+      durationMinutes: draft.durationMinutes,
+      minimumTrackingToolkit: draft.minimumTrackingToolkit,
+      sideTracking: draft.sideTracking,
+      roles: draft.roles,
+    });
 
-    modal.addComponents(
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId('title')
-          .setLabel('Party Announcement Title')
-          .setStyle(TextInputStyle.Short)
-          .setValue(draft.title)
-          .setRequired(false)
-          .setMaxLength(100)
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId('header')
-          .setLabel('Header Note (Optional)')
-          .setStyle(TextInputStyle.Paragraph)
-          .setValue(draft.header)
-          .setRequired(false)
-          .setMaxLength(250)
-      ),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        new TextInputBuilder()
-          .setCustomId('footer')
-          .setLabel('Footer Note (Optional)')
-          .setStyle(TextInputStyle.Short)
-          .setValue(draft.footer)
-          .setRequired(false)
-          .setMaxLength(250)
-      )
-    );
-
-    await interaction.showModal(modal);
-    return;
-  }
-
-  if (interaction.customId === 'wizard_btn_publish') {
-    // Validate complete draft with Zod
-    const validation = CreatePartySchema.safeParse(draft);
     if (!validation.success) {
       const errorMsg = validation.error.errors.map((e) => `• ${e.message}`).join('\n');
       await interaction.reply({
@@ -390,10 +405,10 @@ export async function handleWizardButton(interaction: ButtonInteraction): Promis
     await interaction.deferUpdate();
 
     try {
-      // 1. Create party in Database
+      // 1. Save party to database
       const party = await createParty(validation.data);
 
-      // 2. Publish Discord announcement & thread
+      // 2. Publish announcement embed and dedicated registration thread
       const { announcementMessage, thread } = await createPartyMessageAndThread(
         interaction.client,
         party,
@@ -408,7 +423,7 @@ export async function handleWizardButton(interaction: ButtonInteraction): Promis
         components: [],
       });
     } catch (error) {
-      const errInfo = handleDiscordAPIError(error, 'wizard_btn_publish');
+      const errInfo = handleDiscordAPIError(error, 'create_btn_submit');
       await interaction.followUp({
         content: `❌ **Failed to publish party:** ${errInfo.message}`,
         ephemeral: true,
@@ -417,84 +432,36 @@ export async function handleWizardButton(interaction: ButtonInteraction): Promis
   }
 }
 
-async function updateWizardMessage(interaction: ModalSubmitInteraction, embed: EmbedBuilder): Promise<void> {
-  if (interaction.isFromMessage() && interaction.message) {
-    await interaction.deferUpdate();
-    await interaction.message.edit({ embeds: [embed] });
-  } else {
-    await interaction.reply({ embeds: [embed], ephemeral: true });
-  }
-}
-
-export async function handleWizardModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
+/**
+ * Handles submission of the "Party Roles & Capacities" modal.
+ */
+export async function handleRolesModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
   const key = getDraftKey(interaction.user.id, interaction.guildId!);
   const draft = activeDrafts.get(key);
 
   if (!draft) {
-    await interaction.reply({ content: '❌ Wizard session expired. Please run `/party create` again.', ephemeral: true });
+    await interaction.reply({
+      content: '❌ Party configuration session expired. Please run `/party create` again.',
+      ephemeral: true,
+    });
     return;
   }
 
-  if (interaction.customId === 'wizard_modal_details') {
-    const ipStr = interaction.fields.getTextInputValue('ip_requirement');
-    const durationStr = interaction.fields.getTextInputValue('duration');
-    const foodsStr = interaction.fields.getTextInputValue('foods');
-    const toolkitStr = interaction.fields.getTextInputValue('toolkit');
-    const threadName = interaction.fields.getTextInputValue('thread_name').trim();
+  const rolesStr = interaction.fields.getTextInputValue('roles_input');
+  try {
+    const parsedRoles = parseRolesString(rolesStr);
+    draft.roles = parsedRoles;
 
-    try {
-      const ip = parseInt(ipStr, 10);
-      if (isNaN(ip) || ip < 0) throw new Error('IP requirement must be a non-negative number.');
+    const embed = buildDraftReviewEmbed(draft);
+    const components = buildDraftReviewComponents(draft);
 
-      const durationMinutes = parseDurationString(durationStr);
-
-      const foods = parseInt(foodsStr, 10);
-      if (isNaN(foods) || foods < 0) throw new Error('Food count must be a non-negative number.');
-
-      const toolkit = parseInt(toolkitStr, 10);
-      if (isNaN(toolkit) || toolkit < 0) throw new Error('Tracking toolkit must be a non-negative number.');
-
-      if (!threadName) throw new Error('Thread name cannot be empty.');
-
-      draft.ipRequirement = ip;
-      draft.durationMinutes = durationMinutes;
-      draft.foodCount = foods;
-      draft.minimumTrackingToolkit = toolkit;
-      draft.threadName = threadName;
-
-      const embed = buildWizardEmbed(draft);
-      await updateWizardMessage(interaction, embed);
-    } catch (err: any) {
-      await interaction.reply({ content: `❌ ${err.message}`, ephemeral: true });
+    if (interaction.isFromMessage() && interaction.message) {
+      await interaction.deferUpdate();
+      await interaction.message.edit({ embeds: [embed], components });
+    } else {
+      await interaction.reply({ embeds: [embed], components, ephemeral: true });
     }
-    return;
-  }
-
-  if (interaction.customId === 'wizard_modal_roles') {
-    const rolesStr = interaction.fields.getTextInputValue('roles_input');
-    try {
-      const parsedRoles = parseRolesString(rolesStr);
-      draft.roles = parsedRoles;
-
-      const embed = buildWizardEmbed(draft);
-      await updateWizardMessage(interaction, embed);
-    } catch (err: any) {
-      await interaction.reply({ content: `❌ ${err.message}`, ephemeral: true });
-    }
-    return;
-  }
-
-  if (interaction.customId === 'wizard_modal_text') {
-    const title = interaction.fields.getTextInputValue('title').trim();
-    const header = interaction.fields.getTextInputValue('header').trim();
-    const footer = interaction.fields.getTextInputValue('footer').trim();
-
-    draft.title = title || `${draft.activityType} Party — ${draft.ipRequirement}+ IP`;
-    draft.header = header;
-    draft.footer = footer;
-
-    const embed = buildWizardEmbed(draft);
-    await updateWizardMessage(interaction, embed);
-    return;
+  } catch (err: any) {
+    await interaction.reply({ content: `❌ ${err.message}`, ephemeral: true });
   }
 }

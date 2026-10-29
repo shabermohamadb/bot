@@ -17,44 +17,12 @@ export const partyCommandData = new SlashCommandBuilder()
   .addSubcommand((sub) =>
     sub
       .setName('create')
-      .setDescription('Create a new party with an announcement message and registration thread')
+      .setDescription('Open the Create Party modal to configure and launch a new party')
       .addChannelOption((opt) =>
         opt
           .setName('channel')
           .setDescription('Channel to post the party announcement (defaults to current channel)')
           .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
-          .setRequired(false)
-      )
-      .addStringOption((opt) =>
-        opt
-          .setName('activity')
-          .setDescription('Activity type')
-          .addChoices(
-            { name: 'AVA (Avalonian Dungeon)', value: 'AVA' },
-            { name: 'Outlands Roam / Gank', value: 'Outlands' },
-            { name: 'Both', value: 'Both' }
-          )
-          .setRequired(false)
-      )
-      .addIntegerOption((opt) =>
-        opt
-          .setName('ip_requirement')
-          .setDescription('Minimum required Item Power (e.g. 1500)')
-          .setMinValue(0)
-          .setMaxValue(3000)
-          .setRequired(false)
-      )
-      .addStringOption((opt) =>
-        opt
-          .setName('duration')
-          .setDescription('Expected run duration (e.g. "2 hours" or "90 mins")')
-          .setRequired(false)
-      )
-      .addStringOption((opt) =>
-        opt
-          .setName('thread_name')
-          .setDescription('Custom name for the registration thread')
-          .setMaxLength(100)
           .setRequired(false)
       )
   )
