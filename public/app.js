@@ -14,8 +14,10 @@
     monthlyOffset: 0,
     leaderboardPeriod: 'all',
     leaderboardPage: 1,
+    leaderboardTotalPages: 1,
     leaderboardSearch: '',
     historyPage: 1,
+    historyTotalPages: 1,
     historySearch: '',
     historyActivity: 'ALL',
     historyStatus: 'ALL',
@@ -34,7 +36,9 @@
   const hostModalBody = document.getElementById('hostModalBody');
   const modalCloseBtn = document.getElementById('modalCloseBtn');
 
-  // Initialization
+  // =========================================================================
+  // INITIALIZATION & ROUTING
+  // =========================================================================
   function init() {
     setupNavigation();
     setupOverviewControls();
@@ -44,61 +48,188 @@
     setupHistoryControls();
     setupModal();
 
-    // Listen to hash changes
+    // Listen to hash and history navigation
     window.addEventListener('hashchange', handleRoute);
+    window.addEventListener('popstate', handleRoute);
+
+    // Initial route resolution
     handleRoute();
   }
 
-  // Router
-  function handleRoute() {
-    const hash = window.location.hash.replace('#', '') || 'overview';
+  /**
+   * Robustly parses the target route from location.hash or location.pathname.
+   * Supports: #overview, #/overview, #weekly, #/weekly, /weekly, #host/123, #/host/123
+   */
+  function parseCurrentRoute() {
+    let raw = window.location.hash || '';
 
-    if (hash.startsWith('host/')) {
-      const userId = hash.split('/')[1];
-      if (userId) {
-        openHostProfile(userId);
+    // Strip leading hash and slash
+    if (raw.startsWith('#')) {
+      raw = raw.slice(1);
+    }
+    if (raw.startsWith('/')) {
+      raw = raw.slice(1);
+    }
+
+    // 1. Host profile route
+    if (raw.startsWith('host/')) {
+      const parts = raw.split('/');
+      return { type: 'host', userId: parts[1] || '' };
+    }
+
+    // Strip query strings if present
+    if (raw.includes('?')) {
+      raw = raw.split('?')[0];
+    }
+
+    // 2. If no hash, inspect pathname for direct SPA URL visits
+    if (!raw) {
+      let path = window.location.pathname || '';
+      if (path.startsWith('/')) {
+        path = path.slice(1);
       }
-      return;
+      const firstSegment = path.split('/')[0];
+      if (['overview', 'weekly', 'monthly', 'leaderboard', 'history'].includes(firstSegment)) {
+        raw = firstSegment;
+      }
     }
 
     const validViews = ['overview', 'weekly', 'monthly', 'leaderboard', 'history'];
-    const targetView = validViews.includes(hash) ? hash : 'overview';
+    const view = validViews.includes(raw) ? raw : 'overview';
+    return { type: 'view', view };
+  }
 
+  /**
+   * Handles router state changes and switches the active view.
+   */
+  function handleRoute() {
+    const route = parseCurrentRoute();
+
+    if (route.type === 'host' && route.userId) {
+      // Keep underlying view active and display host modal
+      switchView(state.currentView || 'overview', false);
+      openHostProfile(route.userId);
+      return;
+    }
+
+    switchView(route.view, true);
+  }
+
+  /**
+   * Immediately switches active tab and section visibility.
+   */
+  function switchView(targetView, shouldLoadData = true) {
     state.currentView = targetView;
 
-    // Update active nav item
+    // 1. Close modal if open
+    if (hostModalOverlay && hostModalOverlay.classList.contains('active')) {
+      hostModalOverlay.classList.remove('active');
+    }
+
+    // 2. Update active nav items
     navLinks.forEach((link) => {
       if (link.dataset.view === targetView) {
         link.classList.add('active');
+        link.setAttribute('aria-current', 'page');
       } else {
         link.classList.remove('active');
+        link.removeAttribute('aria-current');
       }
     });
 
-    // Toggle view section
+    // 3. Toggle view sections
     viewSections.forEach((sec) => {
       if (sec.id === `view-${targetView}`) {
         sec.classList.add('active');
+        sec.style.display = 'block';
       } else {
         sec.classList.remove('active');
+        sec.style.display = 'none';
       }
     });
 
-    // Close mobile nav if open
+    // 4. Close mobile menu drawer if open
     if (navLinksContainer) {
       navLinksContainer.classList.remove('open');
     }
 
-    // Load data for view
-    loadViewData(targetView);
+    // 5. Scroll to top of page
+    window.scrollTo({ top: 0, behavior: 'auto' });
+
+    // 6. Load data for active view
+    if (shouldLoadData) {
+      loadViewData(targetView);
+    }
   }
 
+  /**
+   * Sets up click handlers for navbar, brand, mobile menu, and in-page tab links.
+   */
   function setupNavigation() {
+    // Mobile menu toggle
     if (mobileMenuBtn && navLinksContainer) {
-      mobileMenuBtn.addEventListener('click', () => {
+      mobileMenuBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
         navLinksContainer.classList.toggle('open');
       });
     }
+
+    // Close mobile nav when clicking outside
+    document.addEventListener('click', (e) => {
+      if (navLinksContainer && navLinksContainer.classList.contains('open')) {
+        if (!navLinksContainer.contains(e.target) && e.target !== mobileMenuBtn) {
+          navLinksContainer.classList.remove('open');
+        }
+      }
+    });
+
+    // Attach click listeners to all nav items
+    navLinks.forEach((link) => {
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const view = link.dataset.view;
+        if (view) {
+          closeHostProfile(false);
+          if (window.location.hash !== `#${view}`) {
+            window.location.hash = `#${view}`;
+          } else {
+            // Already on this view: refresh tab data immediately
+            switchView(view, true);
+          }
+        }
+      });
+    });
+
+    // Brand click navigates to overview
+    const brand = document.querySelector('.brand');
+    if (brand) {
+      brand.addEventListener('click', (e) => {
+        e.preventDefault();
+        closeHostProfile(false);
+        if (window.location.hash !== '#overview') {
+          window.location.hash = '#overview';
+        } else {
+          switchView('overview', true);
+        }
+      });
+    }
+
+    // In-page internal tab anchors (e.g. "View Full" -> Leaderboard, "Browse All History" -> History)
+    document.querySelectorAll('a[href^="#"]').forEach((link) => {
+      if (!link.classList.contains('nav-item') && !link.classList.contains('brand')) {
+        link.addEventListener('click', (e) => {
+          const href = link.getAttribute('href');
+          if (href && href.startsWith('#')) {
+            const view = href.replace(/^#\/?/, '').split('?')[0];
+            if (['overview', 'weekly', 'monthly', 'leaderboard', 'history'].includes(view)) {
+              e.preventDefault();
+              closeHostProfile(false);
+              window.location.hash = `#${view}`;
+            }
+          }
+        });
+      }
+    });
   }
 
   function loadViewData(view) {
@@ -122,7 +253,7 @@
   }
 
   // =========================================================================
-  // 1. OVERVIEW VIEW
+  // 1. OVERVIEW DASHBOARD VIEW
   // =========================================================================
   function setupOverviewControls() {
     const periodButtons = document.querySelectorAll('#overviewPeriodSelector .btn-period');
@@ -179,10 +310,7 @@
       document.getElementById('ov-unique-hosts').innerHTML = '<span class="text-error">Unavailable</span>';
       document.getElementById('ov-top-host-name').innerHTML = '<span class="text-error">Failed to load data</span>';
       document.getElementById('ov-top-host-count').textContent = '—';
-      const chartContainer = document.getElementById('overviewChartContainer');
-      if (chartContainer) {
-        chartContainer.innerHTML = '<div class="error-state-box">Failed to load overview data from server.</div>';
-      }
+      renderChartError('overviewChart', 'Failed to load overview data from server.');
       const topHostsContainer = document.getElementById('ov-top-hosts-list');
       if (topHostsContainer) {
         topHostsContainer.innerHTML = '<div class="error-state-box">Failed to load leading hosts.</div>';
@@ -360,18 +488,7 @@
       document.getElementById('wk-busiest-count').textContent = '—';
       document.getElementById('wk-top-host-name').innerHTML = '<span class="text-error">Failed to load data</span>';
       document.getElementById('wk-top-host-count').textContent = '—';
-      const chartSvg = document.getElementById('weeklyChart');
-      if (chartSvg && chartSvg.parentElement) {
-        chartSvg.style.display = 'none';
-        let errBox = chartSvg.parentElement.querySelector('.error-state-box');
-        if (!errBox) {
-          errBox = document.createElement('div');
-          errBox.className = 'error-state-box';
-          chartSvg.parentElement.appendChild(errBox);
-        }
-        errBox.textContent = 'Failed to load weekly report from server.';
-        errBox.style.display = 'flex';
-      }
+      renderChartError('weeklyChart', 'Failed to load weekly report from server.');
       const tbody = document.getElementById('wk-leaderboard-tbody');
       if (tbody) {
         tbody.innerHTML = '<tr><td colspan="5" class="error-state-cell">Failed to load weekly report from server.</td></tr>';
@@ -486,18 +603,7 @@
       document.getElementById('mo-busiest-day-count').textContent = '—';
       document.getElementById('mo-top-host-name').innerHTML = '<span class="text-error">Failed to load data</span>';
       document.getElementById('mo-top-host-count').textContent = '—';
-      const chartSvg = document.getElementById('monthlyChart');
-      if (chartSvg && chartSvg.parentElement) {
-        chartSvg.style.display = 'none';
-        let errBox = chartSvg.parentElement.querySelector('.error-state-box');
-        if (!errBox) {
-          errBox = document.createElement('div');
-          errBox.className = 'error-state-box';
-          chartSvg.parentElement.appendChild(errBox);
-        }
-        errBox.textContent = 'Failed to load monthly report from server.';
-        errBox.style.display = 'flex';
-      }
+      renderChartError('monthlyChart', 'Failed to load monthly report from server.');
       const tbody = document.getElementById('mo-leaderboard-tbody');
       if (tbody) {
         tbody.innerHTML = '<tr><td colspan="5" class="error-state-cell">Failed to load monthly report from server.</td></tr>';
@@ -539,8 +645,10 @@
     });
 
     document.getElementById('lb-next-btn')?.addEventListener('click', () => {
-      state.leaderboardPage += 1;
-      loadLeaderboard();
+      if (state.leaderboardPage < state.leaderboardTotalPages) {
+        state.leaderboardPage += 1;
+        loadLeaderboard();
+      }
     });
 
     document.getElementById('btn-export-leaderboard')?.addEventListener('click', () => {
@@ -555,6 +663,8 @@
       if (!res.ok) throw new Error('Failed to load leaderboard');
       const data = await res.json();
 
+      state.leaderboardTotalPages = data.pagination?.totalPages || 1;
+
       const tbody = document.getElementById('lb-tbody');
       if (tbody) {
         if (!data.hosts || data.hosts.length === 0) {
@@ -566,7 +676,7 @@
               <tr>
                 <td><span class="rank-badge rank-${h.rank}">${h.rank}</span></td>
                 <td>
-                  <div class="host-cell">
+                  <div class="host-cell" onclick="window.location.hash='host/${h.userId}'" style="cursor: pointer;">
                     <img class="avatar-xs" src="${escapeHTML(h.avatarUrl)}" alt="" loading="lazy">
                     <div>
                       <div class="cell-bold">${escapeHTML(h.displayName)}</div>
@@ -672,8 +782,10 @@
     });
 
     document.getElementById('hist-next-btn')?.addEventListener('click', () => {
-      state.historyPage += 1;
-      loadHistory();
+      if (state.historyPage < state.historyTotalPages) {
+        state.historyPage += 1;
+        loadHistory();
+      }
     });
 
     document.getElementById('btn-export-parties')?.addEventListener('click', () => {
@@ -696,6 +808,8 @@
       const res = await fetch(query);
       if (!res.ok) throw new Error('Failed to load party history');
       const data = await res.json();
+
+      state.historyTotalPages = data.pagination?.totalPages || 1;
 
       const tbody = document.getElementById('hist-tbody');
       if (tbody) {
@@ -748,15 +862,22 @@
   // =========================================================================
   function setupModal() {
     if (modalCloseBtn) {
-      modalCloseBtn.addEventListener('click', closeHostProfile);
+      modalCloseBtn.addEventListener('click', () => closeHostProfile(true));
     }
     if (hostModalOverlay) {
       hostModalOverlay.addEventListener('click', (e) => {
         if (e.target === hostModalOverlay) {
-          closeHostProfile();
+          closeHostProfile(true);
         }
       });
     }
+
+    // Close on Escape key
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && hostModalOverlay && hostModalOverlay.classList.contains('active')) {
+        closeHostProfile(true);
+      }
+    });
   }
 
   async function openHostProfile(userId) {
@@ -765,7 +886,7 @@
     hostModalBody.innerHTML = '<div style="text-align: center; padding: 3rem; color: var(--color-text-muted);">Loading host profile...</div>';
 
     try {
-      const res = await fetch(`/api/hosts/${userId}`);
+      const res = await fetch(`/api/hosts/${encodeURIComponent(userId)}`);
       if (!res.ok) throw new Error('Could not fetch host profile');
       const data = await res.json();
       const host = data.host;
@@ -810,7 +931,7 @@
             <tbody>
               ${
                 data.recentParties.length === 0
-                  ? '<tr><td colspan="5" style="text-align: center; color: var(--color-text-muted);">No recent parties hosted.</td></tr>'
+                  ? '<tr><td colspan="5" class="empty-state-cell">No recent parties hosted.</td></tr>'
                   : data.recentParties
                       .map(
                         (p) => `
@@ -830,27 +951,50 @@
         </div>
       `;
     } catch (err) {
-      hostModalBody.innerHTML = `<div style="text-align: center; padding: 2rem; color: var(--color-crimson);">Failed to load profile for host ${userId}.</div>`;
+      hostModalBody.innerHTML = `<div style="text-align: center; padding: 2rem; color: var(--color-crimson);">Failed to load profile for host ${escapeHTML(userId)}.</div>`;
     }
   }
 
-  function closeHostProfile() {
+  function closeHostProfile(updateHash = true) {
     if (hostModalOverlay) {
       hostModalOverlay.classList.remove('active');
     }
-    // Revert hash if was viewing host
-    if (window.location.hash.startsWith('#host/')) {
-      window.location.hash = state.currentView;
+    // Revert hash if currently pointing to host profile
+    if (updateHash && window.location.hash.includes('host/')) {
+      window.location.hash = `#${state.currentView || 'overview'}`;
     }
   }
 
   // =========================================================================
   // UTILITIES & SVG CHART RENDERING
   // =========================================================================
+  function renderChartError(svgId, message) {
+    const svg = document.getElementById(svgId);
+    if (!svg || !svg.parentElement) return;
+    const container = svg.parentElement;
+    svg.style.display = 'none';
+
+    let errBox = container.querySelector('.error-state-box');
+    if (!errBox) {
+      errBox = document.createElement('div');
+      errBox.className = 'error-state-box';
+      container.appendChild(errBox);
+    }
+    errBox.textContent = message;
+    errBox.style.display = 'flex';
+
+    const emptyBox = container.querySelector('.empty-state-box');
+    if (emptyBox) emptyBox.style.display = 'none';
+  }
+
   function renderBarChart(svgId, data, valKey, labelKey, emptyMessage) {
     const svg = document.getElementById(svgId);
-    if (!svg) return;
+    if (!svg || !svg.parentElement) return;
     const container = svg.parentElement;
+
+    // Hide any previous error state
+    const existingErr = container.querySelector('.error-state-box');
+    if (existingErr) existingErr.style.display = 'none';
 
     const values = (data || []).map((d) => d[valKey] || 0);
     const hasData = values.some((v) => v > 0);
@@ -871,8 +1015,6 @@
     svg.style.display = 'block';
     const existingEmpty = container.querySelector('.empty-state-box');
     if (existingEmpty) existingEmpty.style.display = 'none';
-    const existingErr = container.querySelector('.error-state-box');
-    if (existingErr) existingErr.style.display = 'none';
 
     if (!data || data.length === 0) return;
 
@@ -882,7 +1024,6 @@
     const chartW = width - padding.left - padding.right;
     const chartH = height - padding.top - padding.bottom;
 
-    const values = data.map((d) => d[valKey] || 0);
     const maxVal = Math.max(...values, 4);
 
     const barWidth = Math.max(4, Math.min(28, (chartW / data.length) * 0.7));
@@ -951,4 +1092,3 @@
     init();
   }
 })();
-
