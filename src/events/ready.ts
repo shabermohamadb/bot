@@ -18,20 +18,26 @@ export async function handleReady(client: Client): Promise<void> {
       const rest = new REST({ version: '10' }).setToken(env.DISCORD_TOKEN);
       const commands = [partyCommandData.toJSON()];
 
-      if (env.DISCORD_GUILD_ID) {
-        // Fast instant guild registration for dev/testing
-        logger.info(`Registering slash commands for test guild: ${env.DISCORD_GUILD_ID}`);
-        await rest.put(
-          Routes.applicationGuildCommands(env.DISCORD_CLIENT_ID, env.DISCORD_GUILD_ID),
-          { body: commands }
-        );
-      } else {
-        // Global slash command registration
-        logger.info('Registering global slash commands...');
-        await rest.put(Routes.applicationCommands(env.DISCORD_CLIENT_ID), {
-          body: commands,
-        });
+      // Register to all joined guilds immediately for instant update and clearing stale guild commands
+      const joinedGuilds = client.guilds.cache;
+      for (const [guildId, guild] of joinedGuilds) {
+        logger.info(`Syncing slash commands for guild "${guild.name}" (${guildId})...`);
+        try {
+          await rest.put(
+            Routes.applicationGuildCommands(env.DISCORD_CLIENT_ID, guildId),
+            { body: commands }
+          );
+          logger.info(`Commands registered for guild "${guild.name}".`);
+        } catch (guildErr) {
+          logger.warn({ guildErr, guildId }, `Could not update guild commands for "${guild.name}"`);
+        }
       }
+
+      // Also register global slash commands for any future servers
+      logger.info('Registering global slash commands...');
+      await rest.put(Routes.applicationCommands(env.DISCORD_CLIENT_ID), {
+        body: commands,
+      });
 
       logger.info('Slash commands registered successfully with Discord.');
     } catch (error) {
