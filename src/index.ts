@@ -1,3 +1,4 @@
+import { Events } from 'discord.js';
 import { createDiscordClient } from './config/discord';
 import { connectDatabase, disconnectDatabase } from './database/client';
 import { handleReady } from './events/ready';
@@ -9,7 +10,7 @@ import { logger } from './utils/logger';
 export const client = createDiscordClient();
 
 // Register Discord event listeners
-client.once('ready', async () => {
+client.once(Events.ClientReady, async () => {
   await handleReady(client);
 });
 
