@@ -52,3 +52,4 @@ export async function handlePartyClose(interaction: ChatInputCommandInteraction)
     content: `🔒 **Party registration has been closed by <@${interaction.user.id}>.** No further registrations or role changes will be accepted.`,
   });
 }
+

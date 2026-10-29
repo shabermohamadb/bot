@@ -52,3 +52,4 @@ export async function handlePartyReopen(interaction: ChatInputCommandInteraction
     content: `🟢 **Party registration has been reopened by <@${interaction.user.id}>!** Members may now register or switch roles.`,
   });
 }
+

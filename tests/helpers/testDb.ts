@@ -7,3 +7,4 @@ export async function clearDatabase(): Promise<void> {
   await prisma.party.deleteMany();
   await prisma.guildConfig.deleteMany();
 }
+

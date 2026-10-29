@@ -59,3 +59,4 @@ process.on('SIGTERM', () => handleShutdown('SIGTERM'));
 if (require.main === module) {
   startBot();
 }
+

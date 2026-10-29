@@ -143,3 +143,4 @@ describe('Permissions & Organizer Enforcement Tests', () => {
     expect(isOwnerOrganizer).toBe(true);
   });
 });
+

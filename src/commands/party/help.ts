@@ -43,3 +43,4 @@ export async function handlePartyHelp(interaction: ChatInputCommandInteraction):
 
   await interaction.reply({ embeds: [embed], ephemeral: true });
 }
+

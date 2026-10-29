@@ -60,3 +60,4 @@ export async function handleReady(client: Client): Promise<void> {
     logger.error({ error }, 'Failed to recover active parties from database on startup');
   }
 }
+

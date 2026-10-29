@@ -26,3 +26,4 @@ export async function handlePartyStatus(interaction: ChatInputCommandInteraction
   const embed = buildPartyStatusEmbed(party);
   await interaction.reply({ embeds: [embed], ephemeral: true });
 }
+

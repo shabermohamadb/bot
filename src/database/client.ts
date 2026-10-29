@@ -45,3 +45,4 @@ export async function disconnectDatabase(): Promise<void> {
     logger.error({ error }, 'Error disconnecting from database');
   }
 }
+

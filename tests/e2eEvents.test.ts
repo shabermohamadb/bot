@@ -107,8 +107,8 @@ describe('End-to-End Thread Message Event Tests', () => {
     const { message: msg1 } = createMockMessage('player-3', `<@${botUserId}> 2`);
     await handleMessageCreate(msg1);
 
-    // Unregister with alias: @Raid master -
-    const { message: msg2, mockReply: reply2 } = createMockMessage('player-3', `@Raid master -`);
+    // Unregister with bot mention: <@botId> -
+    const { message: msg2, mockReply: reply2 } = createMockMessage('player-3', `<@${botUserId}> -`);
     await handleMessageCreate(msg2);
 
     expect(reply2).toHaveBeenCalled();
@@ -128,3 +128,4 @@ describe('End-to-End Thread Message Event Tests', () => {
     expect(mockReply).not.toHaveBeenCalled();
   });
 });
+

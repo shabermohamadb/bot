@@ -36,3 +36,4 @@ export async function logAuditEvent(entry: AuditLogEntry): Promise<void> {
     logger.error({ error, entry }, 'Failed to record audit log entry');
   }
 }
+

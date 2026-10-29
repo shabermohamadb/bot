@@ -31,7 +31,7 @@ export async function handleMessageCreate(message: Message): Promise<void> {
   // Parse message content
   const parsed = parseRegistrationMessage(message.content, {
     botUserId,
-    botAlias: env.BOT_NAME_ALIAS,
+    botAlias: env.BOT_ALIAS_ENABLED ? env.BOT_NAME_ALIAS : undefined,
     prefix: env.BOT_PREFIX,
   });
 
@@ -101,3 +101,4 @@ export async function handleMessageCreate(message: Message): Promise<void> {
     }
   }
 }
+

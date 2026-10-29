@@ -1,5 +1,6 @@
 import { GuildMember, PermissionFlagsBits } from 'discord.js';
 import { prisma } from '../database/client';
+import { env } from '../config/env';
 
 export interface PartyPermissionContext {
   partyId?: string;
@@ -46,7 +47,14 @@ export async function isOrganizerOrAdmin(context: PartyPermissionContext): Promi
       return true;
     }
 
-    // 3. Check for configured Organizer role in GuildConfig
+    // 3. Check for configured Organizer role in GuildConfig or environment variables
+    if (env.ORGANIZER_ROLE_IDS) {
+      const envRoleIds = env.ORGANIZER_ROLE_IDS.split(',').map((id) => id.trim()).filter(Boolean);
+      if (envRoleIds.some((roleId) => member.roles.cache.has(roleId))) {
+        return true;
+      }
+    }
+
     const config = await prisma.guildConfig.findUnique({
       where: { guildId },
       select: { organizerRoleId: true },
@@ -84,3 +92,4 @@ export async function canManageRegistration(
     reason: 'You do not have permission to modify another member’s registration.',
   };
 }
+

@@ -378,3 +378,4 @@ export async function cancelParty(
   logger.info({ partyId, actorId }, 'Party cancelled');
   return updated;
 }
+
