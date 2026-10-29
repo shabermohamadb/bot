@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { clearDatabase } from './helpers/testDb';
 import { createParty, closeParty } from '../src/services/partyService';
 import {
@@ -206,6 +206,10 @@ describe('Registration System Tests', () => {
     for (const r of rejected) {
       expect(r.message).toContain('already full');
     }
+  });
+
+  afterAll(async () => {
+    await clearDatabase();
   });
 });
 

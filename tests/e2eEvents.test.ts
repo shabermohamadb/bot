@@ -75,7 +75,8 @@ describe('End-to-End Thread Message Event Tests', () => {
 
     expect(mockReply).toHaveBeenCalled();
     const replyContent = mockReply.mock.calls[0][0].content;
-    expect(replyContent).toContain('Registered for **Role 1 (Tank)**');
+    expect(replyContent).toContain('REGISTRATION CONFIRMED');
+    expect(replyContent).toContain('You are registered as Tank.');
 
     const party = await getPartyById(partyId);
     const role1 = party?.roles.find((r) => r.roleNumber === 1);
@@ -93,7 +94,8 @@ describe('End-to-End Thread Message Event Tests', () => {
 
     expect(reply2).toHaveBeenCalled();
     const replyContent = reply2.mock.calls[0][0].content;
-    expect(replyContent).toContain('Switched from **Tank** to **Role 3 (DPS Cultist)**');
+    expect(replyContent).toContain('ROLE UPDATED');
+    expect(replyContent).toContain('Your registration has been moved to DPS Cultist.');
 
     const party = await getPartyById(partyId);
     const role1 = party?.roles.find((r) => r.roleNumber === 1);
@@ -113,7 +115,8 @@ describe('End-to-End Thread Message Event Tests', () => {
 
     expect(reply2).toHaveBeenCalled();
     const replyContent = reply2.mock.calls[0][0].content;
-    expect(replyContent).toContain('You have unregistered from **Heal**');
+    expect(replyContent).toContain('REGISTRATION REMOVED');
+    expect(replyContent).toContain('Your role registration has been removed.');
 
     const party = await getPartyById(partyId);
     const role2 = party?.roles.find((r) => r.roleNumber === 2);

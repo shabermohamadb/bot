@@ -9,7 +9,10 @@ The entire player experience is native to Discord: organizers create and configu
 ## Table of Contents
 
 - [Key Features](#key-features)
+- [Web Analytics Dashboard](#web-analytics-dashboard)
 - [Technology Stack](#technology-stack)
+- [Render Web Service Deployment](#render-web-service-deployment)
+- [Web API Endpoints & CSV Exports](#web-api-endpoints--csv-exports)
 - [Number-Based Registration System](#number-based-registration-system)
 - [Discord Slash Commands & Permissions](#discord-slash-commands--permissions)
 - [Discord Developer Portal Setup](#discord-developer-portal-setup)
@@ -51,13 +54,59 @@ The entire player experience is native to Discord: organizers create and configu
    - Preserves party history, active registrations, and audit logs across bot restarts.
    - Clean shutdown handlers (`SIGINT`/`SIGTERM`) and idempotent startup recovery.
 
+6. **Web Analytics & Host Leaderboard**:
+   - Single-page application built with an Albion Online dark tactical theme (`#0B0E14` charcoal, `#D4AF37` gold, `#A0A5AA` silver).
+   - Real-time aggregation of Total Parties Hosted, Active Runs, Unique Hosts, and Top Hosts.
+   - Weekly (Monday–Sunday) and Monthly hosting reports with week-over-week / month-over-month % diffs, busiest day identification, and activity breakdown charts.
+   - Leaderboard with Discord avatars (resolved via live Discord Gateway cache with fallback to Discord default avatar algorithm), Gold/Silver/Bronze badges, and tie-breaking.
+   - Individual host profiles (`#host/:userId`) displaying hosting history, favorite activity, and activity distribution.
+   - Searchable, filterable, and paginated party history with instant CSV data exports (`/api/export/parties.csv`, `/api/export/leaderboard.csv`).
+
+---
+
+## Web Analytics Dashboard
+
+The platform includes a built-in web analytics suite that runs alongside the Discord bot inside a single Node.js runtime.
+
+### Views & Capabilities:
+- **Overview Dashboard (`#overview`)**:
+  - **Metric Cards**: Total Parties Hosted, Active Parties, Unique Organizers, Top Host.
+  - **Period Selector**: Switch between `This Week`, `This Month`, and `All Time` with real-time SVG activity charts.
+  - **Top Hosts Podium**: Highlights the top 5 hosts with Discord avatars and hosting stats.
+  - **Recent Parties**: Scannable list of the latest tracking runs with direct status pills (`OPEN`, `CLOSED`, `CANCELLED`).
+- **Weekly Hosting Reports (`#weekly`)**:
+  - Monday 00:00:00 through Sunday 23:59:59.999 UTC window calculation.
+  - Offset navigation (`« Previous Week`, `Next Week »`) with ISO week numbering.
+  - Comparative metrics vs preceding week with positive/negative delta badges.
+  - Busiest day analysis and daily bar chart.
+- **Monthly Hosting Reports (`#monthly`)**:
+  - Calendar month (1st through 28th/30th/31st) boundary navigation.
+  - Comparative metrics vs preceding month with percentage diffs.
+  - Peak activity day and week identification.
+- **Host Leaderboard (`#leaderboard`)**:
+  - Filterable by Weekly, Monthly, and All-Time ranges.
+  - Instant live host search and pagination.
+  - Gold (`#D4AF37`), Silver (`#A0A5AA`), and Bronze (`#CD7F32`) rank badges.
+  - One-click CSV export of ranked hosts.
+- **Host Profile (`#host/:userId`)**:
+  - User avatar and Discord tag.
+  - Total parties hosted, total unique runs, and favorite activity (e.g. `AVA`, `Outlands`, `Both`).
+  - History table of parties hosted by this organizer.
+- **Party History (`#history`)**:
+  - Search by party title or host user ID.
+  - Filter by activity type (`All`, `AVA`, `Outlands`, `Both`) and status (`All`, `OPEN`, `CLOSED`, `CANCELLED`).
+  - One-click full CSV export of party history records.
+
 ---
 
 ## Technology Stack
 
 - **Runtime**: Node.js v22 (LTS) with TypeScript (ES2022).
-- **Discord Framework**: `discord.js` v14.
-- **Database & ORM**: PostgreSQL (Production) / SQLite (Development) with Prisma ORM.
+- **Discord Framework**: `discord.js` v14 (Gateway client with Message Content Intent).
+- **Web Server**: Express 5 with CORS, serving static assets and JSON REST endpoints.
+- **Database & ORM**: PostgreSQL (Neon Serverless Postgres in production) / SQLite (Development) with Prisma ORM.
+- **Database Indexes**: Indexed `organizerId`, `createdAt`, and compound `[organizerId, createdAt]` for fast reporting aggregations.
+- **Deployment**: Render Web Services (`render.yaml`) with unified single-process architecture.
 - **Validation**: Zod (Schema validation for party inputs, duration parsers, role strings, and env).
 - **Logging**: Pino with `pino-pretty` for structured JSON logs.
 - **Testing**: Vitest with unit, integration, and E2E thread simulation test suites.
@@ -205,6 +254,78 @@ To run with PostgreSQL in production:
    npx prisma migrate dev --name init_postgresql
    npx prisma migrate deploy
    ```
+
+---
+
+## Render Web Service Deployment
+
+The application is structured to run as a **single Render Web Service** that hosts both the Discord Gateway client and the Express Web Analytics Dashboard in one process.
+
+### Architecture Highlights
+- **Single Process Efficiency**: Avoids paying for multiple services or background workers. Both the Discord bot gateway and the Express web server run under `node dist/index.js`.
+- **In-Memory Discord Cache Sharing**: When web visitors browse the dashboard or leaderboard, the web service resolves Discord avatars and user tags directly from Discord.js's active Gateway cache, backed by an in-memory 1-hour TTL cache with fallback to Discord's deterministic default avatar algorithm.
+- **Port & Host Binding**: Express listens on `0.0.0.0:${PORT}` where `PORT` is assigned dynamically by Render (defaults to 3000 locally).
+- **Health Check Path**: Exposes `GET /health` responding with `{"status": "ok", "service": "discord-raid-master", "timestamp": "..."}` for Render's zero-downtime health probes.
+
+### Option 1: Automatic Blueprint Deployment (`render.yaml`)
+A turnkey [`render.yaml`](render.yaml) is included in the root directory:
+
+1. Push your repository to GitHub or GitLab.
+2. Log in to the [Render Dashboard](https://dashboard.render.com/).
+3. Click **New +** -> **Blueprint**.
+4. Select your repository. Render automatically reads `render.yaml` and configures:
+   - **Service Name**: `tracking-party-web`
+   - **Environment**: `node`
+   - **Build Command**: `npm install && npm run prisma:generate && npm run build`
+   - **Start Command**: `npm start`
+   - **Health Check Path**: `/health`
+5. Supply the required environment variables under **Environment Variables** in Render.
+
+### Option 2: Manual Render Web Service Creation
+1. In the Render Dashboard, click **New +** -> **Web Service**.
+2. Connect your Git repository.
+3. Configure the following fields:
+   | Setting | Value |
+   | :--- | :--- |
+   | **Name** | `tracking-party-web` |
+   | **Runtime** | `Node` |
+   | **Branch** | `main` |
+   | **Build Command** | `npm install && npm run prisma:generate && npm run build` |
+   | **Start Command** | `npm start` |
+   | **Health Check Path** | `/health` |
+   | **Auto-Deploy** | `Yes` |
+
+4. Add the following **Environment Variables** in Render:
+   | Variable | Value | Description |
+   | :--- | :--- | :--- |
+   | `NODE_ENV` | `production` | Enables production optimizations |
+   | `DATABASE_URL` | `postgresql://...` | Connection string to your PostgreSQL / Neon database |
+   | `DISCORD_TOKEN` | `...` | Bot token from Discord Developer Portal |
+   | `DISCORD_CLIENT_ID` | `...` | Application ID from Discord Developer Portal |
+   | `DISCORD_GUILD_ID` | `...` | (Optional) Restricts instant slash command sync to this guild |
+   | `APP_BASE_URL` | `https://your-service.onrender.com` | Public URL of your deployed Render service |
+   | `SERVER_TIMEZONE` | `UTC` | Timezone for reporting date boundaries (defaults to UTC) |
+   | `PORT` | *(Render sets this automatically)* | Port assigned by Render runtime |
+
+5. Click **Create Web Service**. Render builds the TypeScript project, generates the Prisma client, and launches both the Discord bot and web dashboard.
+
+---
+
+## Web API Endpoints & CSV Exports
+
+All analytics endpoints return standard JSON responses and support pagination, date offsets, and filtering:
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/health` | Health check for Render zero-downtime deploys and load balancers. |
+| `GET` | `/api/analytics/overview?period=week\|month\|all` | 4 metric cards, activity timeline, top hosts podium, and recent parties. |
+| `GET` | `/api/reports/weekly?offset=0` | Monday–Sunday weekly summary, % diff vs previous week, and daily activity chart. |
+| `GET` | `/api/reports/monthly?offset=0` | Calendar month summary, % diff vs previous month, and peak activity analysis. |
+| `GET` | `/api/leaderboard?period=week\|month\|all&page=1&limit=20&search=` | Ranked hosts with avatar URLs, party counts, and tie-breaking. |
+| `GET` | `/api/hosts/:userId` | Individual host stats, favorite activity type, and party history. |
+| `GET` | `/api/parties?search=&activity=&status=&page=1&limit=15` | Searchable & filterable party history with status filters. |
+| `GET` | `/api/export/parties.csv` | Download complete party history in CSV format. |
+| `GET` | `/api/export/leaderboard.csv?period=week\|month\|all` | Download ranked leaderboard data in CSV format. |
 
 ---
 

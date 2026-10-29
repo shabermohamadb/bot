@@ -1,10 +1,9 @@
 import { Interaction } from 'discord.js';
 import { executePartyCommand } from '../commands/party';
 import {
-  handleCreateModalSubmit,
-  handleRolesModalSubmit,
-  handleCreateSelect,
-  handleCreateButton,
+  handleCreateModalStep1Submit,
+  handleOpenStep2Button,
+  handleCreateModalStep2Submit,
 } from '../commands/party/create';
 import { handleEditModalSubmit } from '../commands/party/edit';
 import { handleCancelButton } from '../commands/party/cancel';
@@ -21,25 +20,10 @@ export async function handleInteractionCreate(interaction: Interaction): Promise
       return;
     }
 
-    // 2. Select Menus
-    if (interaction.isStringSelectMenu()) {
-      if (
-        interaction.customId === 'create_select_activity' ||
-        interaction.customId === 'create_select_side_tracking'
-      ) {
-        await handleCreateSelect(interaction);
-      }
-      return;
-    }
-
-    // 3. Buttons
+    // 2. Buttons
     if (interaction.isButton()) {
-      if (
-        interaction.customId === 'create_btn_edit_roles' ||
-        interaction.customId === 'create_btn_submit' ||
-        interaction.customId === 'create_btn_cancel'
-      ) {
-        await handleCreateButton(interaction);
+      if (interaction.customId.startsWith('create_btn_open_step2:')) {
+        await handleOpenStep2Button(interaction);
       } else if (
         interaction.customId.startsWith('cancel_confirm:') ||
         interaction.customId.startsWith('cancel_abort:')
@@ -49,12 +33,12 @@ export async function handleInteractionCreate(interaction: Interaction): Promise
       return;
     }
 
-    // 4. Modal Submissions
+    // 3. Modal Submissions
     if (interaction.isModalSubmit()) {
-      if (interaction.customId.startsWith('create_party_modal:')) {
-        await handleCreateModalSubmit(interaction);
-      } else if (interaction.customId === 'create_modal_roles') {
-        await handleRolesModalSubmit(interaction);
+      if (interaction.customId.startsWith('create_modal_step1:')) {
+        await handleCreateModalStep1Submit(interaction);
+      } else if (interaction.customId.startsWith('create_modal_step2:')) {
+        await handleCreateModalStep2Submit(interaction);
       } else if (interaction.customId.startsWith('edit_party_modal:')) {
         await handleEditModalSubmit(interaction);
       }

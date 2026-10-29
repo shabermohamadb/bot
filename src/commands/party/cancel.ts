@@ -9,6 +9,7 @@ import {
 import { getPartyById, getPartyByThreadId, cancelParty } from '../../services/partyService';
 import { isOrganizerOrAdmin } from '../../services/permissionService';
 import { updatePartyAnnouncementMessage } from '../../services/threadService';
+import { generatePartyTitle } from '../../services/embedService';
 
 export async function handlePartyCancel(interaction: ChatInputCommandInteraction): Promise<void> {
   const partyIdOption = interaction.options.getString('party_id');
@@ -64,7 +65,7 @@ export async function handlePartyCancel(interaction: ChatInputCommandInteraction
   );
 
   await interaction.reply({
-    content: `⚠️ **Are you sure you want to cancel "${party.title || `${party.activityType} Party`}"?**\nThis will close registrations and mark the party as cancelled. Historical records will be preserved.`,
+    content: `⚠️ **Are you sure you want to cancel "${generatePartyTitle(party)}"?**\nThis will close registrations and mark the party as cancelled. Historical records will be preserved.`,
     components: [row],
     ephemeral: true,
   });

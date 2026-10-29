@@ -59,7 +59,7 @@ export async function handleReady(client: Client): Promise<void> {
           announcementMessageId: party.announcementMessageId,
           threadId: party.threadId,
         },
-        `Active party tracked: "${party.title || party.activityType}"`
+        `Active party tracked: "${party.title || 'TRACKING PARTY'}"`
       );
     }
   } catch (error) {

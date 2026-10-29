@@ -1,6 +1,7 @@
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
 generator client {
@@ -36,6 +37,9 @@ model Party {
   @@index([guildId])
   @@index([threadId])
   @@index([status])
+  @@index([organizerId])
+  @@index([createdAt])
+  @@index([organizerId, createdAt])
 }
 
 model PartyRole {
@@ -66,6 +70,8 @@ model PartyRegistration {
 
   @@unique([partyId, userId])
   @@index([partyId, roleId])
+  @@index([partyId])
+  @@index([userId])
 }
 
 model AuditLog {

@@ -1,6 +1,9 @@
 import { Events } from 'discord.js';
 import { createDiscordClient } from './config/discord';
 import { connectDatabase, disconnectDatabase } from './database/client';
+import { initRealtimeSubscriber, closeRealtime } from './services/realtimeService';
+import { startWebServer, stopWebServer } from './web/server';
+import { setDiscordClientForWeb } from './web/services/discordUserService';
 import { handleReady } from './events/ready';
 import { handleInteractionCreate } from './events/interactionCreate';
 import { handleMessageCreate } from './events/messageCreate';
@@ -8,6 +11,7 @@ import { env } from './config/env';
 import { logger } from './utils/logger';
 
 export const client = createDiscordClient();
+setDiscordClientForWeb(client);
 
 // Register Discord event listeners
 client.once(Events.ClientReady, async () => {
@@ -26,10 +30,16 @@ export async function startBot(): Promise<void> {
   try {
     logger.info('Starting Discord Raid Master Bot...');
 
-    // 1. Connect to Database
+    // 1. Connect to Database (Neon Lakebase Postgres)
     await connectDatabase();
 
-    // 2. Log in to Discord gateway
+    // 2. Initialize Neon Realtime subscriber
+    await initRealtimeSubscriber();
+
+    // 3. Start Web Analytics Server (Dashboard & API)
+    await startWebServer();
+
+    // 4. Log in to Discord gateway
     if (env.NODE_ENV !== 'test') {
       await client.login(env.DISCORD_TOKEN);
     }
@@ -44,6 +54,8 @@ async function handleShutdown(signal: string) {
   logger.info(`Received ${signal}. Shutting down gracefully...`);
   try {
     client.destroy();
+    await stopWebServer();
+    await closeRealtime();
     await disconnectDatabase();
     logger.info('Graceful shutdown complete.');
     process.exit(0);

@@ -6,12 +6,16 @@ import {
   ThreadAutoArchiveDuration,
   Message,
 } from 'discord.js';
-import { PartyWithRelations, buildPartyEmbed, buildThreadInstructionsEmbed } from './embedService';
+import {
+  PartyWithRelations,
+  buildPartyEmbed,
+  buildThreadInstructionsEmbed,
+} from './embedService';
 import { updatePartyDiscordIds } from './partyService';
 import { handleDiscordAPIError } from '../utils/discordErrors';
 import { logger } from '../utils/logger';
 
-// Pending update timers to debounce rapid Discord announcement embed edits
+// Pending update timers to debounce rapid Discord announcement edits
 const pendingUpdates = new Map<string, NodeJS.Timeout>();
 
 export interface CreatePartyDiscordEntitiesResult {
@@ -20,7 +24,7 @@ export interface CreatePartyDiscordEntitiesResult {
 }
 
 /**
- * Publishes the party announcement embed and creates its dedicated registration thread.
+ * Publishes the battle-ready Tracking Party announcement embed and creates its dedicated registration thread.
  */
 export async function createPartyMessageAndThread(
   client: Client,
@@ -102,14 +106,18 @@ export async function updatePartyAnnouncementMessage(
     const timeout = setTimeout(async () => {
       pendingUpdates.delete(key);
       try {
-        const channel = await client.channels.fetch(party.announcementChannelId);
+        // 1. Channel lookup (check in-memory cache first to avoid Discord API fetch latency)
+        const channel = client.channels.cache.get(party.announcementChannelId) ||
+          (await client.channels.fetch(party.announcementChannelId));
         if (!channel || !(channel instanceof TextChannel || channel instanceof NewsChannel)) {
           logger.warn({ channelId: party.announcementChannelId }, 'Announcement channel not found for update');
           resolve();
           return;
         }
 
-        const message = await channel.messages.fetch(party.announcementMessageId!);
+        // 2. Message lookup (check in-memory message cache first)
+        const message = channel.messages.cache.get(party.announcementMessageId!) ||
+          (await channel.messages.fetch(party.announcementMessageId!));
         if (!message) {
           logger.warn({ messageId: party.announcementMessageId }, 'Party announcement message not found for update');
           resolve();
@@ -117,7 +125,7 @@ export async function updatePartyAnnouncementMessage(
         }
 
         const embed = buildPartyEmbed(party);
-        await message.edit({ embeds: [embed] });
+        await message.edit({ embeds: [embed], content: null });
         logger.debug({ partyId: party.id }, 'Updated party announcement embed');
       } catch (error) {
         handleDiscordAPIError(error, `updatePartyAnnouncementMessage(partyId: ${party.id})`);

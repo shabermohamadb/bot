@@ -1,4 +1,4 @@
-import { EmbedBuilder, Colors } from 'discord.js';
+import { EmbedBuilder } from 'discord.js';
 import { Party, PartyRole, PartyRegistration } from '@prisma/client';
 
 export type PartyWithRelations = Party & {
@@ -20,93 +20,204 @@ export function formatDuration(minutes: number): string {
   return `${minutes} minutes`;
 }
 
+// Tactical Albion Online battle-ready palette:
+// Deep charcoal native background with Antique Gold, Muted Silver, Restrained Crimson, and Slate accents
+export const BATTLE_COLORS = {
+  RECRUITING: 0xD4AF37, // Antique Gold (#D4AF37)
+  FULL: 0xA0A5AA,       // Muted Silver (#A0A5AA)
+  CLOSED: 0x4F545C,     // Muted Slate Grey (#4F545C)
+  CANCELLED: 0xED4245,  // Restrained Crimson Red (#ED4245)
+};
+
 /**
- * Builds the primary party announcement embed displayed in the announcement channel.
+ * Centralized title-generation function for party announcements and embeds.
+ *
+ * Examples:
+ * - Default: "⚔️ TRACKING PARTY — 1500+ IP"
+ * - Custom:  "⚔️ BLACK ZONE TRACKING — 1500+ IP"
+ * - Custom:  "⚔️ GUILD TRACKING — 1600+ IP"
+ *
+ * Rules:
+ * 1. Appends the IP requirement only once (never duplicates).
+ * 2. Activity type is independent and displayed in RUN INTEL without renaming the party.
+ * 3. Falls back legacy or missing party names to "TRACKING PARTY".
+ */
+export function generatePartyTitle(party: {
+  title?: string | null;
+  ipRequirement?: number | null;
+  activityType?: string | null;
+}): string {
+  let name = (party.title || '').trim();
+
+  // Strip leading swords or emoji variations
+  name = name.replace(/^[\s⚔️⚔]+/, '').trim();
+
+  // Normalize legacy hardcoded titles such as "AVA Party", "AVA Party — 1500+ IP", "Outlands Party"
+  if (/^(AVA|Outlands|Both)\s+Party(\s*[-—/·]+\s*\d+\+?\s*IP)?(\s*(\/\/|[-—/·]+)\s*\d+\+?\s*IP)?$/i.test(name)) {
+    name = 'TRACKING PARTY';
+  }
+
+  // Strip accidental duplicate IP or slash suffixes like "// 1500+ IP" or "— 1500+ IP // 1500+ IP"
+  name = name.replace(/\s*(\/\/|[-—/·]+)\s*\d+\+?\s*IP\s*(\/\/|[-—/·]+)\s*\d+\+?\s*IP/gi, '');
+  name = name.replace(/\s*\/\/\s*\d+\+?\s*IP/gi, '');
+
+  // Fall back to default TRACKING PARTY if empty
+  if (!name) {
+    name = 'TRACKING PARTY';
+  }
+
+  const ip = party.ipRequirement;
+  const ipText = ip !== undefined && ip !== null ? `${ip}+ IP` : '';
+
+  // Check if the title already contains this IP requirement
+  const hasIpAlready = ip ? new RegExp(`\\b${ip}\\s*\\+?\\s*IP\\b`, 'i').test(name) : false;
+
+  // Clean trailing dashes/slashes
+  name = name.replace(/\s*[-—/·]+\s*$/, '').trim();
+
+  if (ipText && !hasIpAlready) {
+    return `⚔️ ${name.toUpperCase()} — ${ipText}`;
+  }
+
+  return `⚔️ ${name.toUpperCase()}`;
+}
+
+/**
+ * Centralized registration thread name generation function.
+ * E.g. "Tracking Party · 1500+ IP" or "Black Zone Tracking · 1500+ IP"
+ */
+export function generatePartyThreadName(party: {
+  title?: string | null;
+  ipRequirement?: number | null;
+}): string {
+  let name = (party.title || '').trim().replace(/^[\s⚔️⚔]+/, '').trim();
+
+  if (/^(AVA|Outlands|Both)\s+Party(\s*[-—/·]+\s*\d+\+?\s*IP)?$/i.test(name) || !name) {
+    name = 'Tracking Party';
+  }
+
+  // Clean trailing double IP tails
+  name = name.replace(/\s*(\/\/|[-—/·]+)\s*\d+\+?\s*IP/gi, '').trim();
+  if (!name) name = 'Tracking Party';
+
+  const ip = party.ipRequirement;
+  const ipText = ip ? `${ip}+ IP` : '';
+  const hasIpAlready = ip ? new RegExp(`\\b${ip}\\s*\\+?\\s*IP\\b`, 'i').test(name) : false;
+
+  if (ipText && !hasIpAlready) {
+    return `${name} · ${ipText}`;
+  }
+
+  return name;
+}
+
+/**
+ * Builds the bold, tactical Tracking Party announcement embed.
+ * Uses high-contrast typography, deep-charcoal Discord embed container, antique gold accents,
+ * and aligned role availability without repetitive emojis.
  */
 export function buildPartyEmbed(party: PartyWithRelations): EmbedBuilder {
   const embed = new EmbedBuilder();
 
-  // Status color & title formatting
-  let statusEmoji = '🟢';
-  let statusText = 'Registration Open';
-  let color: number = Colors.Gold;
+  // 1. Centralized title generation (appends IP once, preserves custom party name)
+  embed.setTitle(generatePartyTitle(party));
 
-  if (party.status === 'CLOSED') {
-    statusEmoji = '🔒';
-    statusText = 'Registration Closed';
-    color = Colors.Grey;
-  } else if (party.status === 'CANCELLED') {
-    statusEmoji = '❌';
-    statusText = 'Party Cancelled';
-    color = Colors.Red;
-  }
-
-  const titlePrefix = party.status === 'OPEN' ? '⚔️' : statusEmoji;
-  const mainTitle = party.title || `${party.activityType} Party — ${party.ipRequirement}+ IP`;
-  embed.setTitle(`${titlePrefix} ${mainTitle}`);
-  embed.setColor(color);
-
-  // Header if present
-  if (party.header) {
-    embed.setDescription(party.header);
-  }
-
-  // Calculate totals
+  // Calculate totals and status
   let totalSlots = 0;
   let totalRegistered = 0;
+  const sortedRoles = [...party.roles].sort((a, b) => a.roleNumber - b.roleNumber);
 
-  // Format Roles List
-  const rolesLines = party.roles
-    .sort((a, b) => a.roleNumber - b.roleNumber)
-    .map((role) => {
-      totalSlots += role.capacity;
-      const registeredCount = role.registrations ? role.registrations.length : 0;
-      totalRegistered += registeredCount;
+  for (const role of sortedRoles) {
+    totalSlots += role.capacity;
+    totalRegistered += (role.registrations ? role.registrations.length : 0);
+  }
 
-      const userMentions = role.registrations && role.registrations.length > 0
-        ? ` (${role.registrations.map((r) => `<@${r.userId}>`).join(', ')})`
-        : '';
+  let statusText = 'RECRUITING';
+  let color = BATTLE_COLORS.RECRUITING;
 
-      const isFull = registeredCount >= role.capacity;
-      const rolePrefix = isFull ? '🔴' : '🟢';
+  if (party.status === 'CANCELLED') {
+    statusText = 'CANCELLED';
+    color = BATTLE_COLORS.CANCELLED;
+  } else if (party.status === 'CLOSED') {
+    statusText = 'CLOSED';
+    color = BATTLE_COLORS.CLOSED;
+  } else if (totalRegistered >= totalSlots && totalSlots > 0) {
+    statusText = 'FULL';
+    color = BATTLE_COLORS.FULL;
+  }
 
-      return `${rolePrefix} **${role.roleNumber} — ${role.roleName}**: ${registeredCount}/${role.capacity}${userMentions}`;
-    });
+  embed.setColor(color);
+
+  // 2. Description: Subtitle with IP badge, dynamic status, occupancy, and leader detail
+  const descLines: string[] = [
+    `\`${party.ipRequirement}+ IP\` · \`STATUS: ${statusText}\` · \`${totalRegistered}/${totalSlots} SLOTS\``,
+    `**Leader:** <@${party.organizerId}>${party.threadId ? ` · **Thread:** <#${party.threadId}>` : ''}`,
+  ];
+
+  if (party.header) {
+    descLines.push('', `*${party.header}*`);
+  }
+
+  embed.setDescription(descLines.join('\n'));
+
+  // 3. RUN INTEL Field: Compact, clear operational details
+  const foodScopeStr = party.foodRequirementScope === 'Per Player' ? 'Player' : 'Party';
+  const foodStr = `${party.foodCount} / ${foodScopeStr}`;
+  const toolkitStr = party.minimumTrackingToolkit > 0 ? String(party.minimumTrackingToolkit) : 'None';
+  const durationStr = formatDuration(party.durationMinutes);
+
+  const intelLines = [
+    `- Activity:        **${party.activityType}**`,
+    `- Duration:        **${durationStr}**`,
+    `- Foods:           **${foodStr}**`,
+    `- Tracking Kit:    **${toolkitStr}**`,
+    `- Side Tracking:   **${party.sideTracking}**`,
+  ];
+
+  // 4. SQUAD ROSTER Field: Tactical alignment with clean slot availability
+  const maxRoleNameLen = Math.max(...sortedRoles.map((r) => r.roleName.length), 10);
+
+  const roleLines = sortedRoles.map((role) => {
+    const roleNum = String(role.roleNumber).padStart(2, '0');
+    const roleName = role.roleName.toUpperCase().padEnd(maxRoleNameLen, ' ');
+    const regCount = role.registrations ? role.registrations.length : 0;
+    const remaining = role.capacity - regCount;
+
+    let slotState = 'FULL';
+    if (remaining === 1) {
+      slotState = '1 SLOT';
+    } else if (remaining > 1) {
+      slotState = `${remaining} SLOTS`;
+    }
+
+    let line = `\`${roleNum}  ${roleName}  ${regCount} / ${role.capacity} — ${slotState}\``;
+
+    if (role.registrations && role.registrations.length > 0) {
+      const mentions = role.registrations.map((r) => `<@${r.userId}>`).join(', ');
+      line += `  ${mentions}`;
+    }
+
+    return line;
+  });
 
   embed.addFields([
     {
-      name: '📋 Party Details',
-      value: [
-        `**Organizer:** <@${party.organizerId}>`,
-        `**Activity:** ${party.activityType}`,
-        `**Minimum IP:** ${party.ipRequirement}`,
-        `**Foods:** ${party.foodCount} (${party.foodRequirementScope})`,
-        `**Duration:** ${formatDuration(party.durationMinutes)}`,
-        `**Min Tracking Toolkit:** ${party.minimumTrackingToolkit}`,
-        `**Side Tracking:** ${party.sideTracking}`,
-      ].join('\n'),
+      name: 'RUN INTEL',
+      value: intelLines.join('\n'),
       inline: false,
     },
     {
-      name: `👥 Roles (${totalRegistered}/${totalSlots} Slots Filled)`,
-      value: rolesLines.length > 0 ? rolesLines.join('\n') : 'No roles configured.',
-      inline: false,
-    },
-    {
-      name: '🧵 Registration Thread',
-      value: party.threadId
-        ? `<#${party.threadId}> — ${statusText}`
-        : statusText,
+      name: `SQUAD ROSTER  ${totalRegistered}/${totalSlots}`,
+      value: roleLines.length > 0 ? roleLines.join('\n') : 'No roles configured.',
       inline: false,
     },
   ]);
 
+  // 5. Minimal footer: Party ID and timestamp
   if (party.footer) {
     embed.setFooter({ text: party.footer });
   } else {
-    embed.setFooter({
-      text: `Raid Master • ID: ${party.id} • Created at`,
-    });
+    embed.setFooter({ text: `Party ID: ${party.id}` });
   }
 
   embed.setTimestamp(party.createdAt);
@@ -115,38 +226,52 @@ export function buildPartyEmbed(party: PartyWithRelations): EmbedBuilder {
 
 /**
  * Builds the initial registration instructions embed posted inside the party thread.
+ * Clearly presents the role list and concise command directives.
  */
 export function buildThreadInstructionsEmbed(
   party: Party & { roles: PartyRole[] },
   botMentionOrAlias: string = '@Raid master'
 ): EmbedBuilder {
+  const sortedRoles = [...party.roles].sort((a, b) => a.roleNumber - b.roleNumber);
+
+  const roleRosterLines = sortedRoles.map((r) => {
+    const slotText = `${r.capacity} slot${r.capacity > 1 ? 's' : ''}`;
+    return `- \`${r.roleNumber} — ${r.roleName}\` (${slotText})`;
+  });
+
+  let baseName = (party.title || '').trim().replace(/^[\s⚔️⚔]+/, '').trim();
+  if (/^(AVA|Outlands|Both)\s+Party(\s*[-—/·]+\s*\d+\+?\s*IP)?$/i.test(baseName) || !baseName) {
+    baseName = 'TRACKING PARTY';
+  }
+  baseName = baseName.replace(/\s*(\/\/|[-—/·]+)\s*\d+\+?\s*IP/gi, '').trim();
+  if (!baseName) baseName = 'TRACKING PARTY';
+
   const embed = new EmbedBuilder()
-    .setTitle('⚔️ Party Registration')
-    .setColor(Colors.Blue)
+    .setTitle(`⚔️  ${baseName.toUpperCase()} — REGISTRATION`)
+    .setColor(BATTLE_COLORS.RECRUITING)
     .setDescription(
-      `Mention the bot (**${botMentionOrAlias}**) and send the number corresponding to your desired role.\n\n` +
-      `**Role Mapping:**\n` +
-      party.roles
-        .sort((a, b) => a.roleNumber - b.roleNumber)
-        .map((r) => `\`${r.roleNumber}\` — **${r.roleName}** (${r.capacity} slot${r.capacity > 1 ? 's' : ''})`)
-        .join('\n') +
+      `\`Mention the bot and send your role number to register.\`\n\n` +
+      `**ROLE LIST**\n` +
+      roleRosterLines.join('\n') +
       `\n\n` +
-      `**How to Register:**\n` +
-      `• Register: \`${botMentionOrAlias} 1\`\n` +
-      `• Switch Role: Send a different role number (e.g. \`${botMentionOrAlias} 3\`)\n` +
-      `• Unregister: \`${botMentionOrAlias} -\`\n\n` +
-      `*Party requirements and real-time availability are displayed in the main announcement message.*`
+      `**INSTRUCTIONS**\n` +
+      `- \`${botMentionOrAlias} 1\` — register as role 1.\n` +
+      `- \`${botMentionOrAlias} 3\` — switch to role 3, if available.\n` +
+      `- \`${botMentionOrAlias} -\` — unregister your current role.\n\n` +
+      `**REQUIREMENTS**\n` +
+      `- Minimum IP: **${party.ipRequirement}+**\n` +
+      `- Activity: **${party.activityType}**\n` +
+      `- Foods: **${party.foodCount} (${party.foodRequirementScope.toLowerCase()})**\n\n` +
+      `*Live roster & availability are updated on the main announcement message.*`
     )
-    .setFooter({ text: 'Raid Master • Automatic Registration System' });
+    .setFooter({ text: `Party ID: ${party.id}` });
 
   return embed;
 }
 
 /**
- * Builds an ephemeral status embed for /party status command.
+ * Builds the status embed for the /party status command.
  */
 export function buildPartyStatusEmbed(party: PartyWithRelations): EmbedBuilder {
-  const embed = buildPartyEmbed(party);
-  embed.setTitle(`📊 Status: ${party.title || `${party.activityType} Party`}`);
-  return embed;
+  return buildPartyEmbed(party);
 }

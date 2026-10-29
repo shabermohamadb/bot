@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tracking Party — Albion Online Web Analytics</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220%22%20width=%22100%22%20height=%22100%22><text y=%22.9em%22 font-size=%2290%22>⚔️</text></svg>">
+</head>
+<body>
+  <!-- Header / Navigation Bar -->
+  <header class="navbar">
+    <div class="nav-container">
+      <div class="brand">
+        <span class="brand-icon">⚔️</span>
+        <div class="brand-text">
+          <span class="brand-title">TRACKING PARTY</span>
+          <span class="brand-subtitle">ALBION ONLINE ANALYTICS</span>
+        </div>
+      </div>
+
+      <nav class="nav-links" id="navLinks">
+        <a href="#overview" class="nav-item active" data-view="overview">Overview</a>
+        <a href="#weekly" class="nav-item" data-view="weekly">Weekly Report</a>
+        <a href="#monthly" class="nav-item" data-view="monthly">Monthly Report</a>
+        <a href="#leaderboard" class="nav-item" data-view="leaderboard">Leaderboard</a>
+        <a href="#history" class="nav-item" data-view="history">Party History</a>
+      </nav>
+
+      <div class="nav-status">
+        <span class="status-indicator live"></span>
+        <span class="status-label">Live Gateway</span>
+      </div>
+
+      <button class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Toggle Menu">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="main-content">
+    <!-- VIEW 1: OVERVIEW DASHBOARD -->
+    <section id="view-overview" class="view-section active">
+      <div class="view-header">
+        <div>
+          <h1 class="view-title">Command Overview</h1>
+          <p class="view-desc">Live raid and tracking party statistics aggregated from Discord records.</p>
+        </div>
+        <div class="period-selector" id="overviewPeriodSelector">
+          <button class="btn-period active" data-period="week">This Week</button>
+          <button class="btn-period" data-period="month">This Month</button>
+          <button class="btn-period" data-period="all">All Time</button>
+        </div>
+      </div>
+
+      <!-- 4 Primary Metric Cards -->
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-label">TOTAL PARTIES HOSTED</div>
+          <div class="metric-value" id="ov-total-parties">—</div>
+          <div class="metric-sub" id="ov-period-label">Selected Period</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">ACTIVE PARTIES</div>
+          <div class="metric-value text-gold" id="ov-active-parties">—</div>
+          <div class="metric-sub">Currently Recruiting or Open</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">TOTAL UNIQUE HOSTS</div>
+          <div class="metric-value" id="ov-unique-hosts">—</div>
+          <div class="metric-sub">Active Raid Leaders</div>
+        </div>
+        <div class="metric-card top-host-card" id="ov-top-host-card">
+          <div class="metric-label">TOP HOST</div>
+          <div class="top-host-content" id="ov-top-host-content">
+            <img class="avatar-sm" id="ov-top-host-avatar" src="https://cdn.discordapp.com/embed/avatars/0.png" alt="Avatar">
+            <div>
+              <div class="top-host-name" id="ov-top-host-name">—</div>
+              <div class="metric-sub" id="ov-top-host-count">— parties hosted</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chart and Top Hosts Section -->
+      <div class="dashboard-split">
+        <div class="card chart-card">
+          <div class="card-header">
+            <h2 class="card-title">Hosting Activity Over Time</h2>
+            <span class="badge badge-gold">Daily Runs</span>
+          </div>
+          <div class="chart-container" id="overviewChartContainer">
+            <svg id="overviewChart" class="activity-chart" viewBox="0 0 600 200"></svg>
+          </div>
+        </div>
+
+        <div class="card ranking-card">
+          <div class="card-header">
+            <h2 class="card-title">Leading Hosts</h2>
+            <a href="#leaderboard" class="link-gold">View Full</a>
+          </div>
+          <div class="ranking-list" id="ov-top-hosts-list">
+            <!-- Rendered by JS -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Recent Parties Table -->
+      <div class="card table-card">
+        <div class="card-header">
+          <h2 class="card-title">Recent Parties</h2>
+          <a href="#history" class="link-gold">Browse All History</a>
+        </div>
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>PARTY NAME</th>
+                <th>HOST</th>
+                <th>ACTIVITY</th>
+                <th>REQ IP</th>
+                <th>SLOTS</th>
+                <th>STATUS</th>
+                <th>CREATED</th>
+              </tr>
+            </thead>
+            <tbody id="ov-recent-parties-tbody">
+              <!-- Rendered by JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 2: WEEKLY REPORT -->
+    <section id="view-weekly" class="view-section">
+      <div class="view-header">
+        <div>
+          <h1 class="view-title">Weekly Hosting Report</h1>
+          <p class="view-desc">Monday through Sunday performance tracking and host consistency.</p>
+        </div>
+        <div class="navigator-bar">
+          <button class="btn-nav" id="btn-prev-week">◀ Previous Week</button>
+          <span class="nav-pill" id="weekly-range-pill">Loading...</span>
+          <button class="btn-nav" id="btn-next-week">Next Week ▶</button>
+          <button class="btn-period" id="btn-current-week">Current Week</button>
+        </div>
+      </div>
+
+      <!-- Weekly Summary Metrics -->
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-label">PARTIES HOSTED THIS WEEK</div>
+          <div class="metric-value" id="wk-total-parties">—</div>
+          <div class="metric-sub" id="wk-diff-badge">— vs previous week</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">ACTIVE HOSTS</div>
+          <div class="metric-value" id="wk-unique-hosts">—</div>
+          <div class="metric-sub">Organizers this week</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">BUSIEST DAY</div>
+          <div class="metric-value text-gold" id="wk-busiest-day">—</div>
+          <div class="metric-sub" id="wk-busiest-count">— runs</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">HOST OF THE WEEK</div>
+          <div class="top-host-content" id="wk-top-host-content">
+            <img class="avatar-sm" id="wk-top-host-avatar" src="https://cdn.discordapp.com/embed/avatars/0.png" alt="Avatar">
+            <div>
+              <div class="top-host-name" id="wk-top-host-name">—</div>
+              <div class="metric-sub" id="wk-top-host-count">— runs</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Daily Breakdown Chart -->
+      <div class="card chart-card">
+        <div class="card-header">
+          <h2 class="card-title">Daily Activity (Monday – Sunday)</h2>
+          <span class="badge badge-silver">Weekly Pulse</span>
+        </div>
+        <div class="chart-container">
+          <svg id="weeklyChart" class="activity-chart" viewBox="0 0 600 200"></svg>
+        </div>
+      </div>
+
+      <!-- Weekly Leaderboard Table -->
+      <div class="card table-card">
+        <div class="card-header">
+          <h2 class="card-title">Weekly Host Leaderboard</h2>
+        </div>
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 70px;">RANK</th>
+                <th>HOST</th>
+                <th>PARTIES HOSTED</th>
+                <th>LAST ACTIVE</th>
+                <th>PROFILE</th>
+              </tr>
+            </thead>
+            <tbody id="wk-leaderboard-tbody">
+              <!-- Rendered by JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 3: MONTHLY REPORT -->
+    <section id="view-monthly" class="view-section">
+      <div class="view-header">
+        <div>
+          <h1 class="view-title">Monthly Hosting Report</h1>
+          <p class="view-desc">Calendar month aggregate volume and guild activity trends.</p>
+        </div>
+        <div class="navigator-bar">
+          <button class="btn-nav" id="btn-prev-month">◀ Previous Month</button>
+          <span class="nav-pill" id="monthly-range-pill">Loading...</span>
+          <button class="btn-nav" id="btn-next-month">Next Month ▶</button>
+          <button class="btn-period" id="btn-current-month">Current Month</button>
+        </div>
+      </div>
+
+      <!-- Monthly Summary Metrics -->
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-label">TOTAL PARTIES IN MONTH</div>
+          <div class="metric-value" id="mo-total-parties">—</div>
+          <div class="metric-sub" id="mo-diff-badge">— vs previous month</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">UNIQUE ACTIVE HOSTS</div>
+          <div class="metric-value" id="mo-unique-hosts">—</div>
+          <div class="metric-sub">Active organizers</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">PEAK HOSTING DAY</div>
+          <div class="metric-value text-gold" id="mo-busiest-day">—</div>
+          <div class="metric-sub" id="mo-busiest-day-count">— runs</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">HOST OF THE MONTH</div>
+          <div class="top-host-content" id="mo-top-host-content">
+            <img class="avatar-sm" id="mo-top-host-avatar" src="https://cdn.discordapp.com/embed/avatars/0.png" alt="Avatar">
+            <div>
+              <div class="top-host-name" id="mo-top-host-name">—</div>
+              <div class="metric-sub" id="mo-top-host-count">— runs</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Monthly Trend Chart -->
+      <div class="card chart-card">
+        <div class="card-header">
+          <h2 class="card-title">Monthly Daily Volume Distribution</h2>
+          <span class="badge badge-gold">Full Calendar</span>
+        </div>
+        <div class="chart-container">
+          <svg id="monthlyChart" class="activity-chart" viewBox="0 0 600 200"></svg>
+        </div>
+      </div>
+
+      <!-- Monthly Leaderboard Table -->
+      <div class="card table-card">
+        <div class="card-header">
+          <h2 class="card-title">Monthly Host Leaderboard</h2>
+        </div>
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 70px;">RANK</th>
+                <th>HOST</th>
+                <th>PARTIES HOSTED</th>
+                <th>LAST ACTIVE</th>
+                <th>PROFILE</th>
+              </tr>
+            </thead>
+            <tbody id="mo-leaderboard-tbody">
+              <!-- Rendered by JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 4: LEADERBOARD -->
+    <section id="view-leaderboard" class="view-section">
+      <div class="view-header">
+        <div>
+          <h1 class="view-title">Host Leaderboard</h1>
+          <p class="view-desc">Guild rankings sorted by total parties created and organized.</p>
+        </div>
+        <div class="controls-row">
+          <div class="period-selector" id="leaderboardPeriodSelector">
+            <button class="btn-period active" data-period="all">All Time</button>
+            <button class="btn-period" data-period="month">Monthly</button>
+            <button class="btn-period" data-period="week">Weekly</button>
+          </div>
+          <button class="btn-export" id="btn-export-leaderboard">📥 Export CSV</button>
+        </div>
+      </div>
+
+      <!-- Search & Filters -->
+      <div class="filter-bar">
+        <input type="text" id="leaderboardSearchInput" class="input-search" placeholder="Search host by Discord username or ID...">
+      </div>
+
+      <!-- Main Leaderboard Table -->
+      <div class="card table-card">
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 80px;">RANK</th>
+                <th>HOST</th>
+                <th>DISCORD ID</th>
+                <th>PARTIES HOSTED</th>
+                <th>LAST ACTIVE</th>
+                <th>ACTION</th>
+              </tr>
+            </thead>
+            <tbody id="lb-tbody">
+              <!-- Rendered by JS -->
+            </tbody>
+          </table>
+        </div>
+        <div class="pagination-bar" id="lb-pagination">
+          <button class="btn-nav" id="lb-prev-btn">◀ Previous</button>
+          <span class="pagination-info" id="lb-page-info">Page 1 of 1</span>
+          <button class="btn-nav" id="lb-next-btn">Next ▶</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 5: PARTY HISTORY -->
+    <section id="view-history" class="view-section">
+      <div class="view-header">
+        <div>
+          <h1 class="view-title">Party History</h1>
+          <p class="view-desc">Searchable archive of all organized Tracking and AVA parties.</p>
+        </div>
+        <button class="btn-export" id="btn-export-parties">📥 Export CSV</button>
+      </div>
+
+      <!-- Filter Controls -->
+      <div class="filter-panel">
+        <div class="filter-group">
+          <label>Search</label>
+          <input type="text" id="hist-search-input" class="input-field" placeholder="Party title or host ID...">
+        </div>
+        <div class="filter-group">
+          <label>Activity</label>
+          <select id="hist-activity-select" class="input-field">
+            <option value="ALL">All Activities</option>
+            <option value="AVA">AVA</option>
+            <option value="Outlands">Outlands</option>
+            <option value="Both">Both</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label>Status</label>
+          <select id="hist-status-select" class="input-field">
+            <option value="ALL">All Statuses</option>
+            <option value="OPEN">OPEN</option>
+            <option value="CLOSED">CLOSED</option>
+            <option value="CANCELLED">CANCELLED</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label>Date Range</label>
+          <div class="date-inputs">
+            <input type="date" id="hist-start-date" class="input-field date-input">
+            <input type="date" id="hist-end-date" class="input-field date-input">
+          </div>
+        </div>
+        <div class="filter-group filter-actions">
+          <button class="btn-period" id="hist-reset-btn">Reset</button>
+        </div>
+      </div>
+
+      <!-- History Table -->
+      <div class="card table-card">
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>PARTY NAME</th>
+                <th>HOST</th>
+                <th>ACTIVITY</th>
+                <th>MIN IP</th>
+                <th>DURATION</th>
+                <th>SLOTS / REG</th>
+                <th>STATUS</th>
+                <th>TIMESTAMP</th>
+              </tr>
+            </thead>
+            <tbody id="hist-tbody">
+              <!-- Rendered by JS -->
+            </tbody>
+          </table>
+        </div>
+        <div class="pagination-bar" id="hist-pagination">
+          <button class="btn-nav" id="hist-prev-btn">◀ Previous</button>
+          <span class="pagination-info" id="hist-page-info">Page 1 of 1</span>
+          <button class="btn-nav" id="hist-next-btn">Next ▶</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- HOST PROFILE MODAL / DRAWER -->
+  <div class="modal-overlay" id="hostModalOverlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title">Host Profile</h2>
+        <button class="modal-close-btn" id="modalCloseBtn">&times;</button>
+      </div>
+      <div class="modal-body" id="hostModalBody">
+        <!-- Rendered by JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-left">
+        <span class="footer-brand">⚔️ TRACKING PARTY ANALYTICS</span>
+        <span class="footer-note">Designed for Albion Online Guilds & Raid Groups</span>
+      </div>
+      <div class="footer-right">
+        <span class="footer-item">Powered by Neon Lakebase Postgres</span>
+        <span class="footer-item" id="footer-last-updated">Last Updated: Syncing...</span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
+

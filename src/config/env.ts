@@ -20,7 +20,11 @@ const envSchema = z.object({
   DISCORD_CLIENT_ID: z.string().min(1, 'DISCORD_CLIENT_ID is required'),
   DISCORD_GUILD_ID: z.string().optional(),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
+  DATABASE_URL_UNPOOLED: z.string().optional(),
   DATABASE_PATH: z.string().optional(),
+  NEON_BRANCH: z.string().optional(),
+  NEON_REALTIME_URL: z.string().optional(),
+  NEON_REALTIME_SECRET: z.string().optional(),
   BOT_PREFIX: z.string().default('!'),
   BOT_NAME_ALIAS: z.string().default('Raid master'),
   BOT_ALIAS_ENABLED: z
@@ -32,6 +36,12 @@ const envSchema = z.object({
       return false;
     }),
   ORGANIZER_ROLE_IDS: z.string().optional().default(''),
+  PORT: z.coerce.number().default(3000),
+  HOST: z.string().default('0.0.0.0'),
+  SERVER_TIMEZONE: z.string().default('UTC'),
+  APP_BASE_URL: z.string().optional(),
+  DISCORD_CLIENT_SECRET: z.string().optional(),
+  DISCORD_REDIRECT_URI: z.string().optional(),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 });

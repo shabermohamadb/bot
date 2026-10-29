@@ -56,7 +56,7 @@ export async function createParty(input: CreatePartyInput): Promise<PartyWithRel
     });
 
     return party;
-  });
+  }, { maxWait: 10000, timeout: 20000 });
 
   logger.info({ partyId: result.id, guildId: result.guildId }, 'Created new party in database');
   return result;
@@ -100,8 +100,38 @@ export async function getPartyById(partyId: string): Promise<PartyWithRelations 
   });
 }
 
-export async function getPartyByThreadId(threadId: string): Promise<PartyWithRelations | null> {
-  return prisma.party.findFirst({
+interface CachedThreadParty {
+  party: PartyWithRelations;
+  cachedAt: number;
+}
+
+const threadPartyCache = new Map<string, CachedThreadParty>();
+const THREAD_CACHE_TTL_MS = 15_000; // 15 seconds TTL
+
+export function invalidateThreadPartyCache(threadId?: string): void {
+  if (threadId) {
+    threadPartyCache.delete(threadId);
+  } else {
+    threadPartyCache.clear();
+  }
+}
+
+export function updateThreadPartyCache(threadId: string, party: PartyWithRelations): void {
+  threadPartyCache.set(threadId, {
+    party,
+    cachedAt: Date.now(),
+  });
+}
+
+export async function getPartyByThreadId(threadId: string, skipCache: boolean = false): Promise<PartyWithRelations | null> {
+  if (!skipCache) {
+    const cached = threadPartyCache.get(threadId);
+    if (cached && Date.now() - cached.cachedAt < THREAD_CACHE_TTL_MS) {
+      return cached.party;
+    }
+  }
+
+  const party = await prisma.party.findFirst({
     where: { threadId },
     include: {
       roles: {
@@ -112,6 +142,15 @@ export async function getPartyByThreadId(threadId: string): Promise<PartyWithRel
       registrations: true,
     },
   });
+
+  if (party) {
+    threadPartyCache.set(threadId, {
+      party,
+      cachedAt: Date.now(),
+    });
+  }
+
+  return party;
 }
 
 export async function getPartyByMessageId(messageId: string): Promise<PartyWithRelations | null> {
@@ -231,7 +270,11 @@ export async function editParty(
     });
 
     return party;
-  });
+  }, { maxWait: 10000, timeout: 20000 });
+
+  if (updated.threadId) {
+    invalidateThreadPartyCache(updated.threadId);
+  }
 
   return updated;
 }
@@ -279,7 +322,11 @@ export async function closeParty(
     });
 
     return party;
-  });
+  }, { maxWait: 10000, timeout: 20000 });
+
+  if (updated.threadId) {
+    invalidateThreadPartyCache(updated.threadId);
+  }
 
   logger.info({ partyId, actorId }, 'Party closed');
   return updated;
@@ -328,7 +375,11 @@ export async function reopenParty(
     });
 
     return party;
-  });
+  }, { maxWait: 10000, timeout: 20000 });
+
+  if (updated.threadId) {
+    invalidateThreadPartyCache(updated.threadId);
+  }
 
   logger.info({ partyId, actorId }, 'Party reopened');
   return updated;
@@ -373,7 +424,11 @@ export async function cancelParty(
     });
 
     return party;
-  });
+  }, { maxWait: 10000, timeout: 20000 });
+
+  if (updated.threadId) {
+    invalidateThreadPartyCache(updated.threadId);
+  }
 
   logger.info({ partyId, actorId }, 'Party cancelled');
   return updated;

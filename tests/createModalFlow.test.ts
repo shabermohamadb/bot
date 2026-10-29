@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { clearDatabase } from './helpers/testDb';
 import {
   handlePartyCreate,
-  handleCreateModalSubmit,
-  handleCreateButton,
-  buildCreatePartyModal,
+  handleCreateModalStep1Submit,
+  handleOpenStep2Button,
+  handleCreateModalStep2Submit,
   activeDrafts,
   getDraftKey,
 } from '../src/commands/party/create';
@@ -27,7 +27,7 @@ describe('Create Party Modal Flow Tests', () => {
     vi.restoreAllMocks();
   });
 
-  it('Opens native "Create Party" modal directly without prior channel messages', async () => {
+  it('Step 1: Opens native "Create Party" modal directly without prior channel messages', async () => {
     const mockShowModal = vi.fn().mockResolvedValue(undefined);
     const mockChannel = Object.create(TextChannel.prototype);
     mockChannel.id = channelId;
@@ -47,42 +47,41 @@ describe('Create Party Modal Flow Tests', () => {
     expect(mockShowModal).toHaveBeenCalledOnce();
     const modal = mockShowModal.mock.calls[0][0];
 
-    // Acceptance criterion: Modal titled "Create Party"
+    // Modal titled "Create Party"
     expect(modal.data.title).toBe('Create Party');
-    expect(modal.data.custom_id).toBe(`create_party_modal:${channelId}`);
+    expect(modal.data.custom_id).toBe(`create_modal_step1:${channelId}`);
 
-    // Verify 5 input fields (IP, foods, duration, toolkit, thread_name)
+    // Verify 5 input fields (IP, activity, foods, duration, toolkit)
     const components = modal.components;
     expect(components.length).toBe(5);
 
     const customIds = components.map((row: any) => row.components[0].data.custom_id);
     expect(customIds).toContain('ip_requirement');
+    expect(customIds).toContain('activity_type');
     expect(customIds).toContain('foods');
     expect(customIds).toContain('duration');
     expect(customIds).toContain('toolkit');
-    expect(customIds).toContain('thread_name');
 
-    // Acceptance criterion: Removed Party Header and Party Footer
+    // Removed Party Header and Party Footer
     expect(customIds).not.toContain('header');
     expect(customIds).not.toContain('footer');
-    expect(customIds).not.toContain('title');
   });
 
-  it('Handles modal submission, validates inputs, and responds privately (ephemeral)', async () => {
+  it('Step 1 Submit: Validates inputs, saves draft, and prompts with Step 2 button (no summary embed)', async () => {
     const mockReply = vi.fn().mockResolvedValue(undefined);
 
     const fieldsMap = new Map<string, string>([
       ['ip_requirement', '1600'],
+      ['activity_type', 'AVA'],
       ['foods', '3'],
       ['duration', '2.5 hours'],
       ['toolkit', '10'],
-      ['thread_name', 'AVA 1600+ Weekend Raid'],
     ]);
 
     const modalInteraction = {
       guildId,
       channelId,
-      customId: `create_party_modal:${channelId}`,
+      customId: `create_modal_step1:${channelId}`,
       user: { id: userId },
       fields: {
         getTextInputValue: (id: string) => fieldsMap.get(id) || '',
@@ -90,41 +89,70 @@ describe('Create Party Modal Flow Tests', () => {
       reply: mockReply,
     } as unknown as ModalSubmitInteraction;
 
-    await handleCreateModalSubmit(modalInteraction);
+    await handleCreateModalStep1Submit(modalInteraction);
 
     expect(mockReply).toHaveBeenCalledOnce();
     const replyArg = mockReply.mock.calls[0][0];
     expect(replyArg.ephemeral).toBe(true);
+    // Crucial: No summary embed or wizard embed
+    expect(replyArg.embeds).toBeUndefined();
 
-    // Verify draft was saved with parsed values
+    // Verify draft was saved
     const draft = activeDrafts.get(getDraftKey(userId, guildId));
     expect(draft).toBeDefined();
     expect(draft?.ipRequirement).toBe(1600);
-    expect(draft?.foodCount).toBe(3);
-    expect(draft?.durationMinutes).toBe(150); // 2.5 hours = 150 mins
-    expect(draft?.minimumTrackingToolkit).toBe(10);
-    expect(draft?.threadName).toBe('AVA 1600+ Weekend Raid');
     expect(draft?.activityType).toBe('AVA');
-    expect(draft?.sideTracking).toBe('Enabled');
+    expect(draft?.foodCount).toBe(3);
+    expect(draft?.durationMinutes).toBe(150);
+    expect(draft?.minimumTrackingToolkit).toBe(10);
   });
 
-  it('Completes party creation upon clicking Create Party button', async () => {
-    // Setup pre-existing draft from modal submit
+  it('Step 2: Opens Step 2 Modal asking for Side Tracking, Roles, and Thread Name', async () => {
+    // Populate draft from step 1
+    activeDrafts.set(getDraftKey(userId, guildId), {
+      guildId,
+      organizerId: userId,
+      announcementChannelId: channelId,
+      ipRequirement: 1600,
+      activityType: 'AVA',
+      foodCount: 3,
+      durationMinutes: 150,
+      minimumTrackingToolkit: 10,
+    });
+
+    const mockShowModal = vi.fn().mockResolvedValue(undefined);
+
+    const btnInteraction = {
+      guildId,
+      customId: `create_btn_open_step2:${channelId}`,
+      user: { id: userId },
+      showModal: mockShowModal,
+    } as unknown as ButtonInteraction;
+
+    await handleOpenStep2Button(btnInteraction);
+
+    expect(mockShowModal).toHaveBeenCalledOnce();
+    const modal = mockShowModal.mock.calls[0][0];
+    expect(modal.data.custom_id).toBe(`create_modal_step2:${channelId}`);
+
+    const customIds = modal.components.map((row: any) => row.components[0].data.custom_id);
+    expect(customIds).toContain('party_name');
+    expect(customIds).toContain('side_tracking');
+    expect(customIds).toContain('roles');
+    expect(customIds).toContain('thread_name');
+  });
+
+  it('Step 2 Submit: Completes party creation without setup summaries, publishing announcement and thread', async () => {
+    // Populate draft from step 1
     activeDrafts.set(getDraftKey(userId, guildId), {
       guildId,
       organizerId: userId,
       announcementChannelId: channelId,
       ipRequirement: 1500,
-      durationMinutes: 120,
-      foodCount: 2,
-      minimumTrackingToolkit: 5,
-      threadName: 'AVA 1500+ Registration',
       activityType: 'AVA',
-      sideTracking: 'Enabled',
-      roles: [
-        { roleNumber: 1, roleName: 'Tank', capacity: 1 },
-        { roleNumber: 2, roleName: 'Heal', capacity: 1 },
-      ],
+      foodCount: 2,
+      durationMinutes: 120,
+      minimumTrackingToolkit: 5,
     });
 
     const mockStartThread = vi.fn().mockResolvedValue({
@@ -149,32 +177,42 @@ describe('Create Party Modal Flow Tests', () => {
       user: { username: 'Party Raid' },
     } as any;
 
-    const mockDeferUpdate = vi.fn().mockResolvedValue(undefined);
+    const mockDeferReply = vi.fn().mockResolvedValue(undefined);
     const mockEditReply = vi.fn().mockResolvedValue(undefined);
 
-    const buttonInteraction = {
+    const fieldsMap = new Map<string, string>([
+      ['party_name', 'BLACK ZONE TRACKING'],
+      ['side_tracking', 'Enabled'],
+      ['roles', '1: Tank (1), 2: Heal (1), 3: DPS Cultist (2)'],
+      ['thread_name', 'AVA 1500+ Official Run'],
+    ]);
+
+    const modal2Interaction = {
       guildId,
-      customId: 'create_btn_submit',
+      customId: `create_modal_step2:${channelId}`,
       user: { id: userId },
       client: mockClient,
-      deferUpdate: mockDeferUpdate,
+      fields: {
+        getTextInputValue: (id: string) => fieldsMap.get(id) || '',
+      },
+      deferReply: mockDeferReply,
       editReply: mockEditReply,
-    } as unknown as ButtonInteraction;
+      replied: true,
+    } as unknown as ModalSubmitInteraction;
 
-    await handleCreateButton(buttonInteraction);
+    await handleCreateModalStep2Submit(modal2Interaction);
 
-    expect(mockDeferUpdate).toHaveBeenCalledOnce();
+    expect(mockDeferReply).toHaveBeenCalledOnce();
     expect(mockChannel.send).toHaveBeenCalledOnce();
     expect(mockStartThread).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'AVA 1500+ Registration' })
-    );
-    expect(mockEditReply).toHaveBeenCalledWith(
-      expect.objectContaining({
-        content: expect.stringContaining('Party Created Successfully'),
-      })
+      expect.objectContaining({ name: 'AVA 1500+ Official Run' })
     );
 
     // Draft should be cleaned up
     expect(activeDrafts.has(getDraftKey(userId, guildId))).toBe(false);
+
+    // Verify custom party name was saved to database
+    const created = await prisma.party.findFirst();
+    expect(created?.title).toBe('BLACK ZONE TRACKING');
   });
 });

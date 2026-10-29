@@ -156,7 +156,7 @@ export async function handleEditModalSubmit(interaction: ModalSubmitInteraction)
     const updated = await editParty(
       party.id,
       {
-        title: `${party.activityType} Party — ${ipRequirement}+ IP`,
+        title: party.title || 'TRACKING PARTY',
         ipRequirement,
         durationMinutes,
         foodCount,
