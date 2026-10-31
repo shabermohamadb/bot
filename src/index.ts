@@ -7,6 +7,7 @@ import { setDiscordClientForWeb } from './web/services/discordUserService';
 import { handleReady } from './events/ready';
 import { handleInteractionCreate } from './events/interactionCreate';
 import { handleMessageCreate } from './events/messageCreate';
+import { handleGuildCreate } from './events/guildCreate';
 import { env } from './config/env';
 import { logger } from './utils/logger';
 
@@ -16,6 +17,10 @@ setDiscordClientForWeb(client);
 // Register Discord event listeners
 client.once(Events.ClientReady, async () => {
   await handleReady(client);
+});
+
+client.on(Events.GuildCreate, async (guild) => {
+  await handleGuildCreate(guild);
 });
 
 client.on('interactionCreate', async (interaction) => {
