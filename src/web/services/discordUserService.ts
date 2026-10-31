@@ -97,3 +97,32 @@ export async function resolveDiscordUsers(userIds: string[]): Promise<Map<string
   return map;
 }
 
+/**
+ * Returns current authenticated bot profile and guild details.
+ */
+export function getBotProfile(): DiscordUserProfile & { role: string; guildName: string; guildId: string } {
+  if (discordClientRef?.user) {
+    const user = discordClientRef.user;
+    const firstGuild = discordClientRef.guilds.cache.first();
+    return {
+      userId: user.id,
+      username: user.tag || user.username,
+      displayName: user.displayName || user.username,
+      avatarUrl: user.displayAvatarURL({ size: 128, extension: 'png' }) || getDefaultAvatarUrl(user.id),
+      role: 'Raid Commander',
+      guildName: firstGuild?.name || 'Albion Tracking Asia',
+      guildId: firstGuild?.id || '1480556666117427334',
+    };
+  }
+  return {
+    userId: '1565345488507773013',
+    username: 'Party Raid#9161',
+    displayName: 'Party Raid',
+    avatarUrl: getDefaultAvatarUrl('1565345488507773013'),
+    role: 'Raid Commander',
+    guildName: 'Albion Tracking Asia',
+    guildId: '1480556666117427334',
+  };
+}
+
+

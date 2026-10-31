@@ -8,7 +8,10 @@ import {
   getPartyHistory,
   exportPartiesCSV,
   exportLeaderboardCSV,
+  getRecentActivity,
+  getPartyDetails,
 } from '../services/analyticsService';
+import { getBotProfile } from '../services/discordUserService';
 import { logger } from '../../utils/logger';
 
 export const apiRouter = Router();
@@ -20,6 +23,32 @@ apiRouter.get('/health', (_req: Request, res: Response) => {
     service: 'discord-raid-master',
     timestamp: new Date().toISOString(),
   });
+});
+
+// Authenticated Discord User / Bot Context
+apiRouter.get('/api/user-context', (_req: Request, res: Response) => {
+  try {
+    const profile = getBotProfile();
+    res.json({
+      ...profile,
+      unreadNotifications: 3,
+    });
+  } catch (error: any) {
+    logger.error({ error }, 'Error in /api/user-context');
+    res.status(500).json({ error: 'Failed to fetch user context.' });
+  }
+});
+
+// Real Chronological Activity Timeline
+apiRouter.get('/api/analytics/activity', async (req: Request, res: Response) => {
+  try {
+    const limit = parseInt((req.query.limit as string) || '10', 10) || 10;
+    const data = await getRecentActivity(limit);
+    res.json(data);
+  } catch (error: any) {
+    logger.error({ error }, 'Error in /api/analytics/activity');
+    res.status(500).json({ error: 'Failed to fetch activity.' });
+  }
 });
 
 // Overview Metrics
@@ -65,6 +94,7 @@ apiRouter.get('/api/reports/monthly', async (req: Request, res: Response) => {
 apiRouter.get('/api/leaderboard', async (req: Request, res: Response) => {
   try {
     const period = (req.query.period as string) || 'all';
+    const type = (req.query.type as string) || 'hosted';
     const page = parseInt((req.query.page as string) || '1', 10) || 1;
     const limit = parseInt((req.query.limit as string) || '20', 10) || 20;
     const search = req.query.search as string | undefined;
@@ -73,7 +103,11 @@ apiRouter.get('/api/leaderboard', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Invalid period. Use "week", "month", or "all".' });
     }
 
-    const data = await getLeaderboard(period as 'week' | 'month' | 'all', page, limit, search);
+    if (!['hosted', 'joined'].includes(type)) {
+      return res.status(400).json({ error: 'Invalid type. Use "hosted" or "joined".' });
+    }
+
+    const data = await getLeaderboard(period as 'week' | 'month' | 'all', page, limit, search, type as 'hosted' | 'joined');
     res.json(data);
   } catch (error: any) {
     logger.error({ error }, 'Error in /api/leaderboard');
@@ -128,6 +162,25 @@ apiRouter.get('/api/parties', async (req: Request, res: Response) => {
   }
 });
 
+// Party Details by ID
+apiRouter.get('/api/parties/:id', async (req: Request, res: Response) => {
+  try {
+    const rawParam = req.params.id;
+    const id = (Array.isArray(rawParam) ? rawParam[0] : rawParam) || '';
+    if (!id || !id.trim()) {
+      return res.status(400).json({ error: 'Party ID is required.' });
+    }
+    const data = await getPartyDetails(id.trim());
+    if (!data) {
+      return res.status(404).json({ error: 'Party not found.' });
+    }
+    res.json(data);
+  } catch (error: any) {
+    logger.error({ error }, 'Error in /api/parties/:id');
+    res.status(500).json({ error: 'Failed to fetch party details.' });
+  }
+});
+
 // CSV Export: Parties
 apiRouter.get('/api/export/parties.csv', async (req: Request, res: Response) => {
   try {
@@ -151,9 +204,10 @@ apiRouter.get('/api/export/parties.csv', async (req: Request, res: Response) => 
 apiRouter.get('/api/export/leaderboard.csv', async (req: Request, res: Response) => {
   try {
     const period = (req.query.period as 'week' | 'month' | 'all') || 'all';
-    const csvData = await exportLeaderboardCSV(period);
+    const type = (req.query.type as 'hosted' | 'joined') || 'hosted';
+    const csvData = await exportLeaderboardCSV(period, type);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="host_leaderboard_${period}.csv"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${type}_leaderboard_${period}.csv"`);
     res.send(csvData);
   } catch (error: any) {
     logger.error({ error }, 'Error exporting leaderboard CSV');
