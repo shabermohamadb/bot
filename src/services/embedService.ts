@@ -148,11 +148,18 @@ export function buildPartyEmbed(party: PartyWithRelations): EmbedBuilder {
 
   embed.setColor(color);
 
-  // 2. Description: Subtitle with IP badge, dynamic status, occupancy, and leader detail
+  // 2. Description: Subtitle with IP badge, dynamic status, occupancy, leader and thread
   const descLines: string[] = [
-    `\`${party.ipRequirement}+ IP\` · \`STATUS: ${statusText}\` · \`${totalRegistered}/${totalSlots} SLOTS\``,
-    `**Leader:** <@${party.organizerId}>${party.threadId ? ` · **Thread:** <#${party.threadId}>` : ''}`,
+    `\`${party.ipRequirement}+ IP\` | \`STATUS: ${statusText}\` | \`${totalRegistered}/${totalSlots} SLOTS\``,
+    '',
+    `**Leader:** <@${party.organizerId}>`,
   ];
+
+  if (party.threadId) {
+    descLines.push(`**Thread:** <#${party.threadId}>`);
+  } else {
+    descLines.push(`**Thread:** ${generatePartyThreadName(party)}`);
+  }
 
   if (party.header) {
     descLines.push('', `*${party.header}*`);
@@ -160,44 +167,39 @@ export function buildPartyEmbed(party: PartyWithRelations): EmbedBuilder {
 
   embed.setDescription(descLines.join('\n'));
 
-  // 3. RUN INTEL Field: Compact, clear operational details
+  // 3. RUN INTEL Field: Compact, clear operational details (Duration removed)
   const foodScopeStr = party.foodRequirementScope === 'Per Player' ? 'Player' : 'Party';
   const foodStr = `${party.foodCount} / ${foodScopeStr}`;
   const toolkitStr = party.minimumTrackingToolkit > 0 ? String(party.minimumTrackingToolkit) : 'None';
-  const durationStr = formatDuration(party.durationMinutes);
 
   const intelLines = [
-    `- Activity:        **${party.activityType}**`,
-    `- Duration:        **${durationStr}**`,
-    `- Foods:           **${foodStr}**`,
-    `- Tracking Kit:    **${toolkitStr}**`,
-    `- Side Tracking:   **${party.sideTracking}**`,
+    `Activity: **${party.activityType}**`,
+    `Foods: **${foodStr}**`,
+    `Tracking Kit: **${toolkitStr}**`,
+    `Side Tracking: **${party.sideTracking}**`,
   ];
 
-  // 4. SQUAD ROSTER Field: Tactical alignment with clean slot availability
-  const maxRoleNameLen = Math.max(...sortedRoles.map((r) => r.roleName.length), 10);
-
-  const roleLines = sortedRoles.map((role) => {
+  // 4. SQUAD ROSTER Field: Clean, vertically spaced layout with aligned slot counts & mentions
+  const indent = '    ';
+  const roleBlocks = sortedRoles.map((role) => {
     const roleNum = String(role.roleNumber).padStart(2, '0');
-    const roleName = role.roleName.toUpperCase().padEnd(maxRoleNameLen, ' ');
+    const roleName = role.roleName.toUpperCase();
     const regCount = role.registrations ? role.registrations.length : 0;
-    const remaining = role.capacity - regCount;
+    const capacity = role.capacity;
+    const slotWord = capacity === 1 ? 'SLOT' : 'SLOTS';
 
-    let slotState = 'FULL';
-    if (remaining === 1) {
-      slotState = '1 SLOT';
-    } else if (remaining > 1) {
-      slotState = `${remaining} SLOTS`;
-    }
-
-    let line = `\`${roleNum}  ${roleName}  ${regCount} / ${role.capacity} — ${slotState}\``;
+    const lines: string[] = [
+      `**${roleNum}  ${roleName}**`,
+      `${indent}${regCount} / ${capacity} ${slotWord}`,
+    ];
 
     if (role.registrations && role.registrations.length > 0) {
-      const mentions = role.registrations.map((r) => `<@${r.userId}>`).join(', ');
-      line += `  ${mentions}`;
+      for (const reg of role.registrations) {
+        lines.push(`${indent}<@${reg.userId}>`);
+      }
     }
 
-    return line;
+    return lines.join('\n');
   });
 
   embed.addFields([
@@ -207,8 +209,8 @@ export function buildPartyEmbed(party: PartyWithRelations): EmbedBuilder {
       inline: false,
     },
     {
-      name: `SQUAD ROSTER  ${totalRegistered}/${totalSlots}`,
-      value: roleLines.length > 0 ? roleLines.join('\n') : 'No roles configured.',
+      name: `SQUAD ROSTER — ${totalRegistered}/${totalSlots}`,
+      value: roleBlocks.length > 0 ? roleBlocks.join('\n\n') : 'No roles configured.',
       inline: false,
     },
   ]);

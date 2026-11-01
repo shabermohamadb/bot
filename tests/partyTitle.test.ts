@@ -150,7 +150,7 @@ describe('Centralized Party Title & Custom Name Tests', () => {
       // RUN INTEL shows independent activity
       const intelField = data.fields?.find((f) => f.name === 'RUN INTEL');
       expect(intelField).toBeDefined();
-      expect(intelField?.value).toContain('- Activity:        **Outlands**');
+      expect(intelField?.value).toContain('Activity: **Outlands**');
     });
   });
 });

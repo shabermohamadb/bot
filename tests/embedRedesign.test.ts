@@ -52,7 +52,7 @@ describe('Tracking Party Battle-Ready Embed Tests', () => {
     expect(data.color).toBe(BATTLE_COLORS.RECRUITING);
 
     // 3. Description communicates IP, dynamic status, slots, and leader
-    expect(data.description).toContain('`1500+ IP` · `STATUS: RECRUITING` · `0/6 SLOTS`');
+    expect(data.description).toContain('`1500+ IP` | `STATUS: RECRUITING` | `0/6 SLOTS`');
     expect(data.description).toContain('**Leader:** <@org-456>');
     expect(data.description).toContain('**Thread:** <#thread-222>');
 
@@ -60,25 +60,25 @@ describe('Tracking Party Battle-Ready Embed Tests', () => {
     expect(data.description).not.toContain('🟢');
     expect(JSON.stringify(data)).not.toContain('🟢');
 
-    // 5. RUN INTEL field layout
+    // 5. RUN INTEL field layout (Duration completely removed)
     const intelField = data.fields?.find((f) => f.name === 'RUN INTEL');
     expect(intelField).toBeDefined();
-    expect(intelField?.value).toContain('- Activity:        **AVA**');
-    expect(intelField?.value).toContain('- Duration:        **2 hours**');
-    expect(intelField?.value).toContain('- Foods:           **2 / Player**');
-    expect(intelField?.value).toContain('- Tracking Kit:    **5**');
-    expect(intelField?.value).toContain('- Side Tracking:   **Enabled**');
+    expect(intelField?.value).toContain('Activity: **AVA**');
+    expect(intelField?.value).not.toContain('Duration');
+    expect(intelField?.value).toContain('Foods: **2 / Player**');
+    expect(intelField?.value).toContain('Tracking Kit: **5**');
+    expect(intelField?.value).toContain('Side Tracking: **Enabled**');
 
-    // 6. SQUAD ROSTER field layout with availability indicators
+    // 6. SQUAD ROSTER field layout with availability indicators and clean spacing
     const rosterField = data.fields?.find((f) => f.name?.startsWith('SQUAD ROSTER'));
     expect(rosterField).toBeDefined();
-    expect(rosterField?.name).toBe('SQUAD ROSTER  0/6');
+    expect(rosterField?.name).toBe('SQUAD ROSTER — 0/6');
 
-    expect(rosterField?.value).toContain('`01  TANK         0 / 1 — 1 SLOT`');
-    expect(rosterField?.value).toContain('`02  HEAL         0 / 1 — 1 SLOT`');
-    expect(rosterField?.value).toContain('`03  DPS CULTIST  0 / 2 — 2 SLOTS`');
-    expect(rosterField?.value).toContain('`04  DPS MANA     0 / 1 — 1 SLOT`');
-    expect(rosterField?.value).toContain('`05  DPS STALKER  0 / 1 — 1 SLOT`');
+    expect(rosterField?.value).toContain('**01  TANK**\n    0 / 1 SLOT');
+    expect(rosterField?.value).toContain('**02  HEAL**\n    0 / 1 SLOT');
+    expect(rosterField?.value).toContain('**03  DPS CULTIST**\n    0 / 2 SLOTS');
+    expect(rosterField?.value).toContain('**04  DPS MANA**\n    0 / 1 SLOT');
+    expect(rosterField?.value).toContain('**05  DPS STALKER**\n    0 / 1 SLOT');
 
     // 7. Minimal footer with party ID and timestamp
     expect(data.footer?.text).toBe('Party ID: cmv-test-party-123');
@@ -188,17 +188,17 @@ describe('Tracking Party Battle-Ready Embed Tests', () => {
     const data = embed.toJSON();
 
     const rosterField = data.fields?.find((f) => f.name?.startsWith('SQUAD ROSTER'));
-    expect(rosterField?.name).toBe('SQUAD ROSTER  2/6');
+    expect(rosterField?.name).toBe('SQUAD ROSTER — 2/6');
 
-    // Tank role full (1 / 1 — FULL)
-    expect(rosterField?.value).toContain('`01  TANK         1 / 1 — FULL`  <@user-tank>');
+    // Tank role full (1 / 1 SLOT)
+    expect(rosterField?.value).toContain('**01  TANK**\n    1 / 1 SLOT\n    <@user-tank>');
 
-    // DPS Cultist partially filled (1 / 2 — 1 SLOT)
-    expect(rosterField?.value).toContain('`03  DPS CULTIST  1 / 2 — 1 SLOT`  <@user-dps1>');
+    // DPS Cultist partially filled (1 / 2 SLOTS)
+    expect(rosterField?.value).toContain('**03  DPS CULTIST**\n    1 / 2 SLOTS\n    <@user-dps1>');
 
-    // Heal is empty (0 / 1 — 1 SLOT)
-    expect(rosterField?.value).toContain('`02  HEAL         0 / 1 — 1 SLOT`');
-    expect(rosterField?.value).not.toContain('`02  HEAL         0 / 1 — 1 SLOT`  <@');
+    // Heal is empty (0 / 1 SLOT)
+    expect(rosterField?.value).toContain('**02  HEAL**\n    0 / 1 SLOT');
+    expect(rosterField?.value).not.toContain('**02  HEAL**\n    0 / 1 SLOT\n    <@');
   });
 
   it('5. Builds clean thread instructions embed with Tracking Party header and directives', () => {
