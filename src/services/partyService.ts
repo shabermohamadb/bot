@@ -134,16 +134,34 @@ export function updateThreadPartyCache(threadId: string, party: PartyWithRelatio
   });
 }
 
-export async function getPartyByThreadId(threadId: string, skipCache: boolean = false): Promise<PartyWithRelations | null> {
+export async function getPartyByThreadId(
+  threadId: string,
+  referencedMessageId?: string,
+  skipCache: boolean = false
+): Promise<PartyWithRelations | null> {
+  const cacheKey = `${threadId}:${referencedMessageId || ''}`;
   if (!skipCache) {
-    const cached = threadPartyCache.get(threadId);
+    const cached = threadPartyCache.get(cacheKey) || threadPartyCache.get(threadId);
     if (cached && Date.now() - cached.cachedAt < THREAD_CACHE_TTL_MS) {
       return cached.party;
     }
   }
 
-  const party = await prisma.party.findFirst({
-    where: { threadId },
+  const orConditions: any[] = [
+    { threadId },
+    { announcementMessageId: threadId },
+  ];
+  if (referencedMessageId) {
+    orConditions.push({ announcementMessageId: referencedMessageId });
+    orConditions.push({ threadId: referencedMessageId });
+  }
+
+  // 1. Prefer OPEN party matching threadId or announcementMessageId
+  let party = await prisma.party.findFirst({
+    where: {
+      status: 'OPEN',
+      OR: orConditions,
+    },
     include: {
       roles: {
         include: {
@@ -154,11 +172,34 @@ export async function getPartyByThreadId(threadId: string, skipCache: boolean = 
     },
   });
 
+  // 2. If no OPEN party found, fallback to any status so callers can report specific status (e.g. CLOSED)
+  if (!party) {
+    party = await prisma.party.findFirst({
+      where: {
+        OR: orConditions,
+      },
+      include: {
+        roles: {
+          include: {
+            registrations: true,
+          },
+        },
+        registrations: true,
+      },
+    });
+  }
+
   if (party) {
     threadPartyCache.set(threadId, {
       party,
       cachedAt: Date.now(),
     });
+    if (referencedMessageId) {
+      threadPartyCache.set(referencedMessageId, {
+        party,
+        cachedAt: Date.now(),
+      });
+    }
   }
 
   return party;

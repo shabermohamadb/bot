@@ -15,20 +15,48 @@ export const client = createDiscordClient();
 setDiscordClientForWeb(client);
 
 // Register Discord event listeners
+client.on(Events.Error, (error) => {
+  logger.error({ error }, 'Discord Client encountered an error');
+});
+
 client.once(Events.ClientReady, async () => {
-  await handleReady(client);
+  try {
+    await handleReady(client);
+  } catch (err) {
+    logger.error({ err }, 'Error in ClientReady handler');
+  }
 });
 
 client.on(Events.GuildCreate, async (guild) => {
-  await handleGuildCreate(guild);
+  try {
+    await handleGuildCreate(guild);
+  } catch (err) {
+    logger.error({ err }, 'Error in GuildCreate handler');
+  }
 });
 
 client.on('interactionCreate', async (interaction) => {
-  await handleInteractionCreate(interaction);
+  try {
+    await handleInteractionCreate(interaction);
+  } catch (err) {
+    logger.error({ err }, 'Error in interactionCreate listener');
+  }
 });
 
 client.on('messageCreate', async (message) => {
-  await handleMessageCreate(message);
+  try {
+    await handleMessageCreate(message);
+  } catch (err) {
+    logger.error({ err }, 'Error in messageCreate listener');
+  }
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error({ reason, promise }, 'Unhandled Promise Rejection caught');
+});
+
+process.on('uncaughtException', (error) => {
+  logger.error({ error }, 'Uncaught Exception caught');
 });
 
 export async function startBot(): Promise<void> {

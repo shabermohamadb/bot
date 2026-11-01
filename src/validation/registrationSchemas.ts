@@ -8,14 +8,16 @@ export interface ParsedRegistrationMessage {
 
 export interface ParseMessageOptions {
   botUserId: string;
-  botAlias?: string;
+  botAlias?: string | string[];
   prefix?: string;
+  isReplyToBot?: boolean;
 }
 
 /**
  * Parses a chat message to see if it is a registration command targeting the bot.
+ * Supports both Method 1 (Bot Mention Registration) and Method 2 (Reply-Based Registration).
  * Returns information on whether the message was intended for the bot,
- * whether it's an unregister request ('-'), or a role number registration.
+ * whether it's an unregister request ('-'), or a role number registration (1-5).
  */
 export function parseRegistrationMessage(
   content: string,
@@ -26,29 +28,38 @@ export function parseRegistrationMessage(
     return { isTargetedAtBot: false, isUnregister: false };
   }
 
-  const { botUserId, botAlias, prefix } = options;
+  const { botUserId, botAlias, prefix, isReplyToBot } = options;
 
   // Patterns for mentioning the bot:
   // <@botUserId> or <@!botUserId>
   const mentionRegex = new RegExp(`^<@!?${botUserId}>`, 'i');
-  // Configured alias e.g. "@Raid master" or "Raid master"
-  const aliasRegex = botAlias
-    ? new RegExp(`^@?${escapeRegex(botAlias)}`, 'i')
-    : null;
+
+  // Configured aliases e.g. "@Party Raid", "Party Raid", "@Raid master"
+  const aliases = Array.isArray(botAlias) ? botAlias : botAlias ? [botAlias] : [];
+
   // Prefix e.g. "!raid" or "!"
   const prefixRegex = prefix ? new RegExp(`^${escapeRegex(prefix)}`, 'i') : null;
 
   let remaining = '';
   let isTargeted = false;
 
+  // METHOD 1: Bot Mention Registration
   if (mentionRegex.test(trimmed)) {
     isTargeted = true;
     remaining = trimmed.replace(mentionRegex, '').trim();
-  } else if (aliasRegex && aliasRegex.test(trimmed)) {
-    isTargeted = true;
-    remaining = trimmed.replace(aliasRegex, '').trim();
-  } else if (prefixRegex && prefixRegex.test(trimmed)) {
-    // If prefix matches, check if immediately followed by number or '-'
+  } else {
+    for (const a of aliases) {
+      if (!a) continue;
+      const aliasRegex = new RegExp(`^@?${escapeRegex(a)}`, 'i');
+      if (aliasRegex.test(trimmed)) {
+        isTargeted = true;
+        remaining = trimmed.replace(aliasRegex, '').trim();
+        break;
+      }
+    }
+  }
+
+  if (!isTargeted && prefixRegex && prefixRegex.test(trimmed)) {
     const afterPrefix = trimmed.replace(prefixRegex, '').trim();
     if (/^(\d+|-)/.test(afterPrefix)) {
       isTargeted = true;
@@ -56,8 +67,33 @@ export function parseRegistrationMessage(
     }
   }
 
+  // METHOD 2: Reply-Based Registration
+  // If the user replied directly to a bot message in a party thread
+  if (!isTargeted && isReplyToBot) {
+    const singleNumberMatch = trimmed.match(/^(?:role\s*|r(?=\d)\s*)?#?(\d+)[.!]?$/i);
+    if (singleNumberMatch) {
+      const roleNum = parseInt(singleNumberMatch[1], 10);
+      if (roleNum >= 1 && roleNum <= 5) {
+        isTargeted = true;
+        remaining = String(roleNum);
+      } else if (roleNum === 0 || (roleNum > 5 && roleNum <= 9)) {
+        // Single digit out of 1-5 range: recognize as attempted role selection and validate
+        return {
+          isTargetedAtBot: true,
+          isUnregister: false,
+          rawToken: trimmed,
+          error: 'Role number must be between 1 and 5. Check the role list in this thread.',
+        };
+      }
+      // If > 9 (e.g. 1500 for IP, 20 for duration), ignore as unrelated conversation
+    } else if (/^(\-|unregister|remove|cancel|leave)$/i.test(trimmed)) {
+      isTargeted = true;
+      remaining = '-';
+    }
+  }
+
   if (!isTargeted) {
-    // Message is normal chat, ignore it
+    // Message is normal chat or unrelated reply, ignore it with zero database overhead
     return { isTargetedAtBot: false, isUnregister: false };
   }
 
@@ -66,15 +102,18 @@ export function parseRegistrationMessage(
     return {
       isTargetedAtBot: true,
       isUnregister: false,
-      error: 'Please specify a role number to register (e.g. `@Raid master 1`) or `-` to unregister.',
+      error: 'Please specify a role number (1-5) to register (e.g. `@Party Raid 1` or reply with `1`) or `-` to unregister.',
     };
   }
 
+  // Normalize remaining string by removing optional "role " or "r<digit>" prefix
+  remaining = remaining.replace(/^(?:role\s*|r(?=\d)\s*)/i, '').trim();
+
   // Token could be '-' or a role number (or invalid token)
   const tokens = remaining.split(/\s+/);
-  const firstToken = tokens[0];
+  const firstToken = tokens[0].replace(/^#/, '').replace(/[.!]?$/, '');
 
-  if (firstToken === '-' || firstToken === 'unregister' || firstToken === 'remove') {
+  if (firstToken === '-' || firstToken.toLowerCase() === 'unregister' || firstToken.toLowerCase() === 'remove' || firstToken.toLowerCase() === 'cancel' || firstToken.toLowerCase() === 'leave') {
     return {
       isTargetedAtBot: true,
       isUnregister: true,
@@ -85,12 +124,12 @@ export function parseRegistrationMessage(
   // Check if token is a number
   if (/^\d+$/.test(firstToken)) {
     const roleNum = parseInt(firstToken, 10);
-    if (roleNum <= 0) {
+    if (roleNum < 1 || roleNum > 5) {
       return {
         isTargetedAtBot: true,
         isUnregister: false,
         rawToken: firstToken,
-        error: 'Role number must be greater than 0.',
+        error: 'Role number must be between 1 and 5. Check the role list in this thread.',
       };
     }
     return {
@@ -106,7 +145,7 @@ export function parseRegistrationMessage(
     isTargetedAtBot: true,
     isUnregister: false,
     rawToken: firstToken,
-    error: `Invalid registration token "${firstToken}". Send a role number (e.g. \`1\`) or \`-\` to unregister.`,
+    error: `Invalid registration token "${firstToken}". Send a role number (1 to 5) or \`-\` to unregister.`,
   };
 }
 
