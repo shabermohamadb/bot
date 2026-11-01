@@ -10,6 +10,53 @@ import {
 } from '../utils/dateUtils';
 import { resolveDiscordUser, resolveDiscordUsers, DiscordUserProfile, getBotProfile } from './discordUserService';
 import { generatePartyTitle } from '../../services/embedService';
+import { dashboardEventBus } from '../../services/dashboardEventBus';
+import { logger } from '../../utils/logger';
+
+// =========================================================================
+// IN-MEMORY PERFORMANCE CACHING & INSTANT MUTATION INVALIDATION
+// =========================================================================
+interface CacheEntry<T> {
+  data: T;
+  expiresAt: number;
+}
+
+const memoryCache = new Map<string, CacheEntry<any>>();
+
+export function getFromCache<T>(key: string): T | null {
+  const entry = memoryCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    memoryCache.delete(key);
+    return null;
+  }
+  return entry.data as T;
+}
+
+export function setInCache<T>(key: string, data: T, ttlSeconds = 60): void {
+  memoryCache.set(key, {
+    data,
+    expiresAt: Date.now() + ttlSeconds * 1000,
+  });
+}
+
+export function invalidateAnalyticsCache(prefix?: string): void {
+  if (!prefix) {
+    memoryCache.clear();
+    return;
+  }
+  for (const key of memoryCache.keys()) {
+    if (key.startsWith(prefix)) {
+      memoryCache.delete(key);
+    }
+  }
+}
+
+// Automatically invalidate all caches whenever any database mutation event occurs
+dashboardEventBus.on('event', (evt) => {
+  logger.debug({ type: evt.type, partyId: evt.partyId }, 'Invalidating analytics cache on DB mutation');
+  invalidateAnalyticsCache();
+});
 
 export interface LeaderboardEntry {
   rank: number;
@@ -77,46 +124,129 @@ export interface OverviewMetrics {
 
 /**
  * Computes the main overview analytics metrics for a selected period.
+ * Highly optimized with concurrent query execution and in-memory caching.
  */
 export async function getOverviewMetrics(period: 'week' | 'month' | 'all' = 'week'): Promise<OverviewMetrics> {
+  const cacheKey = `overview:${period}`;
+  const cached = getFromCache<OverviewMetrics>(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
   const range = period === 'week' ? getWeekRange(0) : period === 'month' ? getMonthRange(0) : getAllTimeRange();
 
-  // 1. Total parties in period
-  const totalPartiesHosted = await prisma.party.count({
-    where: {
-      createdAt: {
-        gte: range.start,
-        lte: range.end,
-      },
-    },
-  });
+  // Setup time bounds for activity chart
+  const daysCount = period === 'month' ? 30 : 14;
+  const now = new Date();
+  const timeBuckets: Array<{ date: string; label: string; count: number }> = [];
 
-  // 2. Currently active parties
-  const activeParties = await prisma.party.count({
-    where: { status: 'OPEN' },
-  });
+  for (let i = daysCount - 1; i >= 0; i--) {
+    const d = new Date(now);
+    d.setUTCDate(now.getUTCDate() - i);
+    const dayStr = toISODate(d);
+    const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+    timeBuckets.push({ date: dayStr, label, count: 0 });
+  }
 
-  // 3. Unique hosts in period
-  const distinctHosts = await prisma.party.groupBy({
-    by: ['organizerId'],
-    where: {
-      createdAt: {
-        gte: range.start,
-        lte: range.end,
+  const rangeStartForChart = new Date(now);
+  rangeStartForChart.setUTCDate(now.getUTCDate() - (daysCount - 1));
+  rangeStartForChart.setUTCHours(0, 0, 0, 0);
+
+  // Execute independent database queries concurrently via Promise.all
+  const [
+    totalPartiesHosted,
+    activeParties,
+    distinctHosts,
+    distinctParticipants,
+    totalJoined,
+    partiesForChart,
+    recentRawParties,
+    typeCounts,
+    recentActivity,
+  ] = await Promise.all([
+    prisma.party.count({
+      where: {
+        createdAt: {
+          gte: range.start,
+          lte: range.end,
+        },
       },
-    },
-    _count: { id: true },
-    orderBy: {
-      _count: { id: 'desc' },
-    },
-  });
+    }),
+    prisma.party.count({
+      where: { status: 'OPEN' },
+    }),
+    prisma.party.groupBy({
+      by: ['organizerId'],
+      where: {
+        createdAt: {
+          gte: range.start,
+          lte: range.end,
+        },
+      },
+      _count: { id: true },
+      orderBy: {
+        _count: { id: 'desc' },
+      },
+    }),
+    prisma.partyRegistration.groupBy({
+      by: ['userId'],
+      where: {
+        registeredAt: {
+          gte: range.start,
+          lte: range.end,
+        },
+      },
+      _count: { id: true },
+      orderBy: {
+        _count: { id: 'desc' },
+      },
+    }),
+    prisma.partyRegistration.count({
+      where: {
+        registeredAt: {
+          gte: range.start,
+          lte: range.end,
+        },
+      },
+    }),
+    prisma.party.findMany({
+      where: {
+        createdAt: {
+          gte: rangeStartForChart,
+        },
+      },
+      select: { createdAt: true },
+    }),
+    prisma.party.findMany({
+      take: 10,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        roles: {
+          include: {
+            registrations: true,
+          },
+        },
+      },
+    }),
+    prisma.party.groupBy({
+      by: ['activityType'],
+      _count: { id: true },
+    }),
+    getRecentActivity(10),
+  ]);
 
   const totalUniqueHosts = distinctHosts.length;
 
-  // 4. Resolve top hosts with profiles
+  // Batch resolve all Discord user profiles in a single call to prevent N+1 API lookups
   const topHostIds = distinctHosts.slice(0, 5).map((h) => h.organizerId);
-  const userMap = await resolveDiscordUsers(topHostIds);
+  const recentHostIds = recentRawParties.map((p) => p.organizerId);
+  const topParticipantId = distinctParticipants[0]?.userId;
+  const userIdsToResolve = Array.from(
+    new Set([...topHostIds, ...recentHostIds, ...(topParticipantId ? [topParticipantId] : [])])
+  );
+  const userMap = await resolveDiscordUsers(userIdsToResolve);
 
+  // Top hosts list
   const topHosts: LeaderboardEntry[] = distinctHosts.slice(0, 5).map((h, index) => {
     const profile = userMap.get(h.organizerId) || {
       userId: h.organizerId,
@@ -135,38 +265,12 @@ export async function getOverviewMetrics(period: 'week' | 'month' | 'all' = 'wee
       activityBreakdown: {},
     };
   });
-
   const topHost = topHosts[0] || null;
 
-  // 4b. Resolve top participants (most joined in period)
-  const distinctParticipants = await prisma.partyRegistration.groupBy({
-    by: ['userId'],
-    where: {
-      registeredAt: {
-        gte: range.start,
-        lte: range.end,
-      },
-    },
-    _count: { id: true },
-    orderBy: {
-      _count: { id: 'desc' },
-    },
-  });
-
-  const totalJoined = await prisma.partyRegistration.count({
-    where: {
-      registeredAt: {
-        gte: range.start,
-        lte: range.end,
-      },
-    },
-  });
-
+  // Top joined participant
   let topJoined: JoinedLeaderboardEntry | null = null;
-  if (distinctParticipants.length > 0) {
-    const topParticipantId = distinctParticipants[0].userId;
-    const participantProfiles = await resolveDiscordUsers([topParticipantId]);
-    const profile = participantProfiles.get(topParticipantId);
+  if (topParticipantId) {
+    const profile = userMap.get(topParticipantId);
     topJoined = {
       rank: 1,
       userId: topParticipantId,
@@ -179,58 +283,17 @@ export async function getOverviewMetrics(period: 'week' | 'month' | 'all' = 'wee
     };
   }
 
-  // 5. Activity over time (daily counts for the last 14 days or period)
-  const daysCount = period === 'month' ? 30 : 14;
-  const timeBuckets: Array<{ date: string; label: string; count: number }> = [];
-  const now = new Date();
-
-  for (let i = daysCount - 1; i >= 0; i--) {
-    const d = new Date(now);
-    d.setUTCDate(now.getUTCDate() - i);
-    const dayStr = toISODate(d);
-    const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
-    timeBuckets.push({ date: dayStr, label, count: 0 });
-  }
-
-  const rangeStartForChart = new Date(now);
-  rangeStartForChart.setUTCDate(now.getUTCDate() - (daysCount - 1));
-  rangeStartForChart.setUTCHours(0, 0, 0, 0);
-
-  const partiesForChart = await prisma.party.findMany({
-    where: {
-      createdAt: {
-        gte: rangeStartForChart,
-      },
-    },
-    select: { createdAt: true },
-  });
-
+  // Populate time series buckets
   const countMap = new Map<string, number>();
   partiesForChart.forEach((p) => {
     const day = toISODate(p.createdAt);
     countMap.set(day, (countMap.get(day) || 0) + 1);
   });
-
   timeBuckets.forEach((bucket) => {
     bucket.count = countMap.get(bucket.date) || 0;
   });
 
-  // 6. Recent Parties
-  const recentRawParties = await prisma.party.findMany({
-    take: 10,
-    orderBy: { createdAt: 'desc' },
-    include: {
-      roles: {
-        include: {
-          registrations: true,
-        },
-      },
-    },
-  });
-
-  const recentHostIds = recentRawParties.map((p) => p.organizerId);
-  const recentUserMap = await resolveDiscordUsers(recentHostIds);
-
+  // Recent parties
   const recentParties = recentRawParties.map((p) => {
     let totalSlots = 0;
     let registeredCount = 0;
@@ -239,7 +302,7 @@ export async function getOverviewMetrics(period: 'week' | 'month' | 'all' = 'wee
       registeredCount += r.registrations.length;
     });
 
-    const hostProfile = recentUserMap.get(p.organizerId);
+    const hostProfile = userMap.get(p.organizerId);
     return {
       id: p.id,
       title: generatePartyTitle(p),
@@ -257,11 +320,7 @@ export async function getOverviewMetrics(period: 'week' | 'month' | 'all' = 'wee
     };
   });
 
-  // 7. Party Types breakdown (AVA, Outlands, Both)
-  const typeCounts = await prisma.party.groupBy({
-    by: ['activityType'],
-    _count: { id: true },
-  });
+  // Party types breakdown
   let avaCount = 0;
   let outlandsCount = 0;
   let bothCount = 0;
@@ -279,13 +338,9 @@ export async function getOverviewMetrics(period: 'week' | 'month' | 'all' = 'wee
     both: { count: bothCount, percent: totalPartyTypes > 0 ? Math.round((bothCount / totalPartyTypes) * 100) : 0 },
   };
 
-  // 8. Recent Activity (Real events: parties created, members registered, parties completed)
-  const recentActivity = await getRecentActivity(10);
-
-  // 9. Current Bot / User Context
   const currentUser = getBotProfile();
 
-  return {
+  const metrics: OverviewMetrics = {
     period,
     dateRange: {
       start: range.start.toISOString(),
@@ -307,6 +362,9 @@ export async function getOverviewMetrics(period: 'week' | 'month' | 'all' = 'wee
     recentParties,
     lastUpdated: new Date().toISOString(),
   };
+
+  setInCache(cacheKey, metrics, 60);
+  return metrics;
 }
 
 /**
@@ -424,6 +482,10 @@ export async function getRecentActivity(limit: number = 10): Promise<ActivityEve
  * Returns full party details with roles and participants for the party details modal.
  */
 export async function getPartyDetails(partyId: string) {
+  const cacheKey = `partyDetails:${partyId}`;
+  const cached = getFromCache<any>(cacheKey);
+  if (cached) return cached;
+
   const party = await prisma.party.findUnique({
     where: { id: partyId },
     include: {
@@ -484,7 +546,7 @@ export async function getPartyDetails(partyId: string) {
     };
   });
 
-  return {
+  const details = {
     id: party.id,
     title: generatePartyTitle(party),
     rawTitle: party.title,
@@ -506,42 +568,49 @@ export async function getPartyDetails(partyId: string) {
     formattedDate: formatFullDateTime(party.createdAt),
     closedAt: party.closedAt ? party.closedAt.toISOString() : null,
   };
+
+  setInCache(cacheKey, details, 60);
+  return details;
 }
 
 /**
  * Computes weekly hosting report for a given week offset (0 = current week, -1 = last week).
  */
 export async function getWeeklyReport(offset: number = 0) {
+  const cacheKey = `weekly:${offset}`;
+  const cached = getFromCache<any>(cacheKey);
+  if (cached) return cached;
+
   const currentWeek = getWeekRange(offset);
   const prevWeek = getWeekRange(offset - 1);
 
-  // Current week parties
-  const parties = await prisma.party.findMany({
-    where: {
-      createdAt: {
-        gte: currentWeek.start,
-        lte: currentWeek.end,
-      },
-    },
-    orderBy: { createdAt: 'desc' },
-    include: {
-      roles: {
-        include: {
-          registrations: true,
+  // Execute current week parties and previous week count concurrently
+  const [parties, prevWeekCount] = await Promise.all([
+    prisma.party.findMany({
+      where: {
+        createdAt: {
+          gte: currentWeek.start,
+          lte: currentWeek.end,
         },
       },
-    },
-  });
-
-  // Previous week count
-  const prevWeekCount = await prisma.party.count({
-    where: {
-      createdAt: {
-        gte: prevWeek.start,
-        lte: prevWeek.end,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        roles: {
+          include: {
+            registrations: true,
+          },
+        },
       },
-    },
-  });
+    }),
+    prisma.party.count({
+      where: {
+        createdAt: {
+          gte: prevWeek.start,
+          lte: prevWeek.end,
+        },
+      },
+    }),
+  ]);
 
   const totalParties = parties.length;
   // Never invent comparison percentages when previous period had 0 data
@@ -713,7 +782,7 @@ export async function getWeeklyReport(offset: number = 0) {
     };
   });
 
-  return {
+  const report = {
     period: currentWeek,
     previousPeriod: prevWeek,
     summary: {
@@ -733,40 +802,49 @@ export async function getWeeklyReport(offset: number = 0) {
     parties: formattedParties,
     lastUpdated: new Date().toISOString(),
   };
+
+  setInCache(cacheKey, report, 60);
+  return report;
 }
 
 /**
  * Computes monthly hosting report for a given month offset (0 = current month, -1 = last month).
  */
 export async function getMonthlyReport(offset: number = 0) {
+  const cacheKey = `monthly:${offset}`;
+  const cached = getFromCache<any>(cacheKey);
+  if (cached) return cached;
+
   const currentMonth = getMonthRange(offset);
   const prevMonth = getMonthRange(offset - 1);
 
-  const parties = await prisma.party.findMany({
-    where: {
-      createdAt: {
-        gte: currentMonth.start,
-        lte: currentMonth.end,
-      },
-    },
-    orderBy: { createdAt: 'desc' },
-    include: {
-      roles: {
-        include: {
-          registrations: true,
+  // Execute current month parties and previous month count concurrently
+  const [parties, prevMonthCount] = await Promise.all([
+    prisma.party.findMany({
+      where: {
+        createdAt: {
+          gte: currentMonth.start,
+          lte: currentMonth.end,
         },
       },
-    },
-  });
-
-  const prevMonthCount = await prisma.party.count({
-    where: {
-      createdAt: {
-        gte: prevMonth.start,
-        lte: prevMonth.end,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        roles: {
+          include: {
+            registrations: true,
+          },
+        },
       },
-    },
-  });
+    }),
+    prisma.party.count({
+      where: {
+        createdAt: {
+          gte: prevMonth.start,
+          lte: prevMonth.end,
+        },
+      },
+    }),
+  ]);
 
   const totalParties = parties.length;
   // Never invent comparison percentages when previous period had 0 data
@@ -923,7 +1001,7 @@ export async function getMonthlyReport(offset: number = 0) {
 
   const topJoined = joinedLeaderboard[0] || null;
 
-  return {
+  const report = {
     period: currentMonth,
     previousPeriod: prevMonth,
     summary: {
@@ -943,6 +1021,9 @@ export async function getMonthlyReport(offset: number = 0) {
     joinedLeaderboard,
     lastUpdated: new Date().toISOString(),
   };
+
+  setInCache(cacheKey, report, 60);
+  return report;
 }
 
 /**
@@ -955,6 +1036,10 @@ export async function getLeaderboard(
   search?: string,
   type: 'hosted' | 'joined' = 'hosted'
 ) {
+  const cacheKey = `leaderboard:${type}:${period}:${page}:${limit}:${search || ''}`;
+  const cached = getFromCache<any>(cacheKey);
+  if (cached) return cached;
+
   const range = period === 'week' ? getWeekRange(0) : period === 'month' ? getMonthRange(0) : getAllTimeRange();
 
   if (type === 'joined') {
@@ -1011,7 +1096,7 @@ export async function getLeaderboard(
     const safePage = Math.max(1, Math.min(page, totalPages));
     const paginated = rankedList.slice((safePage - 1) * limit, safePage * limit);
 
-    return {
+    const result = {
       type: 'joined',
       period,
       dateRange: range,
@@ -1030,6 +1115,9 @@ export async function getLeaderboard(
       },
       lastUpdated: new Date().toISOString(),
     };
+
+    setInCache(cacheKey, result, 60);
+    return result;
   }
 
   // Aggregate host counts
@@ -1088,7 +1176,7 @@ export async function getLeaderboard(
   const safePage = Math.max(1, Math.min(page, totalPages));
   const paginated = rankedList.slice((safePage - 1) * limit, safePage * limit);
 
-  return {
+  const result = {
     type: 'hosted',
     period,
     dateRange: range,
@@ -1105,6 +1193,9 @@ export async function getLeaderboard(
     },
     lastUpdated: new Date().toISOString(),
   };
+
+  setInCache(cacheKey, result, 60);
+  return result;
 }
 
 /**

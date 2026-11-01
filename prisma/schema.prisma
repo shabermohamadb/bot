@@ -40,6 +40,8 @@ model Party {
   @@index([organizerId])
   @@index([createdAt])
   @@index([organizerId, createdAt])
+  @@index([status, createdAt])
+  @@index([activityType, createdAt])
 }
 
 model PartyRole {
@@ -72,6 +74,8 @@ model PartyRegistration {
   @@index([partyId, roleId])
   @@index([partyId])
   @@index([userId])
+  @@index([userId, registeredAt])
+  @@index([registeredAt])
 }
 
 model AuditLog {

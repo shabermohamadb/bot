@@ -2,6 +2,7 @@ import { prisma } from '../database/client';
 import { logAuditEvent } from './auditService';
 import { PartyWithRelations } from './embedService';
 import { getPartyById, updateThreadPartyCache } from './partyService';
+import { publishDashboardEvent } from './dashboardEventBus';
 import { logger } from '../utils/logger';
 
 export interface RegistrationResult {
@@ -221,6 +222,15 @@ export async function registerUserForRole(
       };
     } else if (result.action === 'ROLE_SWITCHED') {
       logger.info({ partyId, userId, roleNumber }, 'User switched party role');
+
+      publishDashboardEvent('registration:switched', partyId, {
+        userId,
+        roleNumber: targetRole.roleNumber,
+        roleName: targetRole.roleName,
+        previousRoleNumber: result.previousRoleNumber,
+        previousRoleName: result.previousRoleName,
+      });
+
       return {
         success: true,
         message: `Switched from **${result.previousRoleName}** to **Role ${targetRole.roleNumber} (${targetRole.roleName})**!`,
@@ -233,6 +243,13 @@ export async function registerUserForRole(
       };
     } else {
       logger.info({ partyId, userId, roleNumber }, 'User registered for party role');
+
+      publishDashboardEvent('registration:created', partyId, {
+        userId,
+        roleNumber: targetRole.roleNumber,
+        roleName: targetRole.roleName,
+      });
+
       return {
         success: true,
         message: `Registered for **Role ${targetRole.roleNumber} (${targetRole.roleName})**!`,
@@ -368,6 +385,13 @@ export async function unregisterUser(
     }
 
     logger.info({ partyId, userId, actorId }, 'User unregistered from party');
+
+    publishDashboardEvent('registration:removed', partyId, {
+      userId,
+      roleNumber: removedRole.roleNumber,
+      roleName: removedRole.roleName,
+      actorId,
+    });
 
     return {
       success: true,

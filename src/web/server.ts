@@ -3,6 +3,7 @@ import cors from 'cors';
 import path from 'path';
 import http from 'http';
 import { apiRouter } from './routes/api';
+import { realtimeRouter } from './routes/realtime';
 import { env } from '../config/env';
 import { logger } from '../utils/logger';
 
@@ -21,8 +22,9 @@ export function createWebApp(): express.Application {
     next();
   });
 
-  // Mount API router
+  // Mount API & Realtime routers
   app.use(apiRouter);
+  app.use(realtimeRouter);
 
   // Serve static UI assets
   const publicDir = path.resolve(process.cwd(), 'public');

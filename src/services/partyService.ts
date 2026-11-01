@@ -2,6 +2,7 @@ import { prisma } from '../database/client';
 import { CreatePartyInput, EditPartyInput } from '../validation/partySchemas';
 import { PartyWithRelations } from './embedService';
 import { logAuditEvent } from './auditService';
+import { publishDashboardEvent } from './dashboardEventBus';
 import { logger } from '../utils/logger';
 
 export async function createParty(input: CreatePartyInput): Promise<PartyWithRelations> {
@@ -59,6 +60,16 @@ export async function createParty(input: CreatePartyInput): Promise<PartyWithRel
   }, { maxWait: 10000, timeout: 20000 });
 
   logger.info({ partyId: result.id, guildId: result.guildId }, 'Created new party in database');
+
+  // Publish event to dashboard clients after database commit
+  publishDashboardEvent('party:created', result.id, {
+    title: result.title,
+    organizerId: result.organizerId,
+    status: result.status,
+    activityType: result.activityType,
+    ipRequirement: result.ipRequirement,
+  });
+
   return result;
 }
 
@@ -276,6 +287,12 @@ export async function editParty(
     invalidateThreadPartyCache(updated.threadId);
   }
 
+  publishDashboardEvent('party:updated', updated.id, {
+    title: updated.title,
+    status: updated.status,
+    activityType: updated.activityType,
+  });
+
   return updated;
 }
 
@@ -327,6 +344,11 @@ export async function closeParty(
   if (updated.threadId) {
     invalidateThreadPartyCache(updated.threadId);
   }
+
+  publishDashboardEvent('party:status_changed', updated.id, {
+    status: 'CLOSED',
+    closedAt: updated.closedAt,
+  });
 
   logger.info({ partyId, actorId }, 'Party closed');
   return updated;
@@ -381,6 +403,10 @@ export async function reopenParty(
     invalidateThreadPartyCache(updated.threadId);
   }
 
+  publishDashboardEvent('party:status_changed', updated.id, {
+    status: 'OPEN',
+  });
+
   logger.info({ partyId, actorId }, 'Party reopened');
   return updated;
 }
@@ -429,6 +455,11 @@ export async function cancelParty(
   if (updated.threadId) {
     invalidateThreadPartyCache(updated.threadId);
   }
+
+  publishDashboardEvent('party:status_changed', updated.id, {
+    status: 'CANCELLED',
+    closedAt: updated.closedAt,
+  });
 
   logger.info({ partyId, actorId }, 'Party cancelled');
   return updated;

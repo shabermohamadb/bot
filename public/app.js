@@ -55,6 +55,193 @@
   const notificationDropdown = document.getElementById('notificationDropdown');
 
   // =========================================================================
+  // REAL-TIME SYNCHRONIZATION (Server-Sent Events + Fallback Polling)
+  // =========================================================================
+  let eventSource = null;
+  let sseReconnectTimer = null;
+  let sseReconnectAttempts = 0;
+  let fallbackPollTimer = null;
+  const seenEventIds = new Set();
+
+  function setupRealtimeSync() {
+    if (typeof EventSource === 'undefined') {
+      startPollingFallback();
+      return;
+    }
+    connectSSE();
+  }
+
+  function connectSSE() {
+    if (eventSource) {
+      try {
+        eventSource.close();
+      } catch (e) {}
+    }
+
+    const sseUrl = '/api/realtime/stream';
+    eventSource = new EventSource(sseUrl);
+
+    eventSource.onopen = function () {
+      sseReconnectAttempts = 0;
+      if (sseReconnectTimer) {
+        clearTimeout(sseReconnectTimer);
+        sseReconnectTimer = null;
+      }
+      stopPollingFallback();
+      updateSyncStatusUI('online');
+    };
+
+    eventSource.onmessage = function (event) {
+      try {
+        if (!event.data) return;
+        const payload = JSON.parse(event.data);
+
+        // Handshake message
+        if (payload.type === 'connected') {
+          return;
+        }
+
+        // Deduplicate events safely
+        if (payload.id) {
+          if (seenEventIds.has(payload.id)) {
+            return;
+          }
+          seenEventIds.add(payload.id);
+          if (seenEventIds.size > 200) {
+            const first = seenEventIds.values().next().value;
+            seenEventIds.delete(first);
+          }
+        }
+
+        handleRealtimeEvent(payload);
+      } catch (err) {
+        console.warn('Error handling realtime event:', err);
+      }
+    };
+
+    eventSource.onerror = function () {
+      updateSyncStatusUI('offline');
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
+
+      startPollingFallback();
+
+      const delay = Math.min(30000, 1000 * Math.pow(2, sseReconnectAttempts));
+      sseReconnectAttempts++;
+
+      if (sseReconnectTimer) clearTimeout(sseReconnectTimer);
+      sseReconnectTimer = setTimeout(() => {
+        connectSSE();
+      }, delay);
+    };
+  }
+
+  function handleRealtimeEvent(event) {
+    const serverTimeCard = document.querySelector('.server-time-card');
+    if (serverTimeCard) {
+      serverTimeCard.classList.add('pulse-sync');
+      setTimeout(() => serverTimeCard.classList.remove('pulse-sync'), 1200);
+    }
+
+    // Refresh active view without full page reload
+    if (state.currentView === 'overview') {
+      loadOverview();
+    } else if (state.currentView === 'weekly') {
+      loadWeekly(state.weeklyOffset);
+    } else if (state.currentView === 'monthly') {
+      loadMonthly(state.monthlyOffset);
+    } else if (state.currentView === 'leaderboard') {
+      loadLeaderboard(state.leaderboardType, state.leaderboardPeriod, state.leaderboardPage, state.leaderboardSearch);
+    } else if (state.currentView === 'history') {
+      loadHistory();
+    }
+
+    // If modal is open for this party, silently refresh its roster & details
+    if (state.currentPartyDetailsId && event.partyId && state.currentPartyDetailsId === event.partyId) {
+      silentRefreshPartyDetails(event.partyId);
+    }
+
+    // Update user context / unread notifications
+    loadUserContext();
+  }
+
+  function updateSyncStatusUI(status) {
+    const liveIndicator = document.getElementById('utcLiveIndicator');
+    if (liveIndicator) {
+      if (status === 'online') {
+        liveIndicator.style.background = 'var(--color-gold-bright)';
+        liveIndicator.title = 'Real-time Neon Event Stream Connected';
+      } else {
+        liveIndicator.style.background = '#e74c3c';
+        liveIndicator.title = 'Real-time disconnected — using background polling fallback';
+      }
+    }
+  }
+
+  function startPollingFallback() {
+    if (fallbackPollTimer) return;
+    fallbackPollTimer = setInterval(() => {
+      if (state.currentView === 'overview') {
+        loadOverview();
+      }
+    }, 30000);
+  }
+
+  function stopPollingFallback() {
+    if (fallbackPollTimer) {
+      clearInterval(fallbackPollTimer);
+      fallbackPollTimer = null;
+    }
+  }
+
+  async function silentRefreshPartyDetails(partyId) {
+    try {
+      const res = await fetch(`/api/parties/${encodeURIComponent(partyId)}`);
+      if (!res.ok) return;
+      const party = await res.json();
+      if (state.currentPartyDetailsId !== partyId) return;
+
+      const titleEl = document.getElementById('partyModalTitle');
+      if (titleEl) titleEl.textContent = party.title;
+
+      const rolesContainer = partyModalBody?.querySelector('.party-roles-list');
+      if (rolesContainer) {
+        rolesContainer.innerHTML = party.roles
+          .map(
+            (role) => `
+          <div class="party-role-card">
+            <div class="party-role-header">
+              <span class="party-role-name">#${role.roleNumber} — ${escapeHTML(role.roleName)}</span>
+              <span class="party-role-capacity font-mono">${role.registeredCount} / ${role.capacity} ${role.isFull ? '• FULL' : ''}</span>
+            </div>
+            <div class="party-role-members">
+              ${
+                role.members.length === 0
+                  ? '<div style="font-size: 0.75rem; color: var(--color-text-muted); font-style: italic;">No member registered for this role yet.</div>'
+                  : role.members
+                      .map(
+                        (m) => `
+                    <div class="party-member-row">
+                      <img class="avatar-xs" src="${escapeHTML(m.avatarUrl)}" alt="Avatar">
+                      <span style="font-weight: 600; color: var(--color-text-primary);">${escapeHTML(m.displayName)}</span>
+                      <span style="font-size: 0.7rem; color: var(--color-text-muted); margin-left: auto;" class="font-mono">${escapeHTML(m.formattedDate)}</span>
+                    </div>
+                  `
+                      )
+                      .join('')
+              }
+            </div>
+          </div>
+        `
+          )
+          .join('');
+      }
+    } catch (e) {}
+  }
+
+  // =========================================================================
   // INITIALIZATION & ROUTING
   // =========================================================================
   function init() {
@@ -68,6 +255,7 @@
     setupHistoryControls();
     setupModals();
     setupAmbientParticles();
+    setupRealtimeSync();
 
     // Fetch initial user & bot context
     loadUserContext();
@@ -1398,6 +1586,7 @@
 
   window.openPartyDetails = async function (partyId) {
     if (!partyDetailsModal || !partyModalBody) return;
+    state.currentPartyDetailsId = partyId;
     partyDetailsModal.classList.add('active');
     partyModalBody.innerHTML = '<div style="text-align: center; padding: 3rem; color: var(--color-text-muted);">Loading expedition details...</div>';
 
@@ -1476,6 +1665,7 @@
   };
 
   function closePartyDetails() {
+    state.currentPartyDetailsId = null;
     if (partyDetailsModal) partyDetailsModal.classList.remove('active');
   }
 
