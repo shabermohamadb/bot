@@ -4,6 +4,12 @@ export interface ParsedRegistrationMessage {
   roleNumber?: number;
   rawToken?: string;
   error?: string;
+
+  // Organizer powers
+  isOrganizerCommand?: boolean;
+  organizerAction?: 'ASSIGN' | 'REMOVE';
+  targetUserId?: string;
+  missingTarget?: boolean;
 }
 
 export interface ParseMessageOptions {
@@ -15,9 +21,10 @@ export interface ParseMessageOptions {
 
 /**
  * Parses a chat message to see if it is a registration command targeting the bot.
- * Supports both Method 1 (Bot Mention Registration) and Method 2 (Reply-Based Registration).
- * Returns information on whether the message was intended for the bot,
- * whether it's an unregister request ('-'), or a role number registration (1-5).
+ * Supports:
+ * - Method 1: Bot Mention Registration (@Party Raid 1..5)
+ * - Method 2: Reply-Based Registration (Reply with 1..5)
+ * - Organizer Powers: @Raid Master +<role> @user and @Raid Master -<role> @user
  */
 export function parseRegistrationMessage(
   content: string,
@@ -61,34 +68,39 @@ export function parseRegistrationMessage(
 
   if (!isTargeted && prefixRegex && prefixRegex.test(trimmed)) {
     const afterPrefix = trimmed.replace(prefixRegex, '').trim();
-    if (/^(\d+|-)/.test(afterPrefix)) {
+    if (/^([+-]?\d+|-)/.test(afterPrefix)) {
       isTargeted = true;
       remaining = afterPrefix;
     }
   }
 
-  // METHOD 2: Reply-Based Registration
-  // If the user replied directly to a bot message in a party thread
+  // METHOD 2: Reply-Based Registration & Organizer Commands in replies
   if (!isTargeted && isReplyToBot) {
-    const singleNumberMatch = trimmed.match(/^(?:role\s*|r(?=\d)\s*)?#?(\d+)[.!]?$/i);
-    if (singleNumberMatch) {
-      const roleNum = parseInt(singleNumberMatch[1], 10);
-      if (roleNum >= 1 && roleNum <= 5) {
-        isTargeted = true;
-        remaining = String(roleNum);
-      } else if (roleNum === 0 || (roleNum > 5 && roleNum <= 9)) {
-        // Single digit out of 1-5 range: recognize as attempted role selection and validate
-        return {
-          isTargetedAtBot: true,
-          isUnregister: false,
-          rawToken: trimmed,
-          error: 'Role number must be between 1 and 5. Check the role list in this thread.',
-        };
-      }
-      // If > 9 (e.g. 1500 for IP, 20 for duration), ignore as unrelated conversation
-    } else if (/^(\-|unregister|remove|cancel|leave)$/i.test(trimmed)) {
+    // Check if reply is an organizer command (e.g. +2 @user or -5 @user)
+    if (/^[+-]\s*#?\d+/i.test(trimmed)) {
       isTargeted = true;
-      remaining = '-';
+      remaining = trimmed;
+    } else {
+      const singleNumberMatch = trimmed.match(/^(?:role\s*|r(?=\d)\s*)?#?(\d+)[.!]?$/i);
+      if (singleNumberMatch) {
+        const roleNum = parseInt(singleNumberMatch[1], 10);
+        if (roleNum >= 1 && roleNum <= 5) {
+          isTargeted = true;
+          remaining = String(roleNum);
+        } else if (roleNum === 0 || (roleNum > 5 && roleNum <= 9)) {
+          // Single digit out of 1-5 range: recognize as attempted role selection and validate
+          return {
+            isTargetedAtBot: true,
+            isUnregister: false,
+            rawToken: trimmed,
+            error: 'Role number must be between 1 and 5. Check the role list in this thread.',
+          };
+        }
+        // If > 9 (e.g. 1500 for IP, 20 for duration), ignore as unrelated conversation
+      } else if (/^(\-|unregister|remove|cancel|leave)$/i.test(trimmed)) {
+        isTargeted = true;
+        remaining = '-';
+      }
     }
   }
 
@@ -103,6 +115,43 @@ export function parseRegistrationMessage(
       isTargetedAtBot: true,
       isUnregister: false,
       error: 'Please specify a role number (1-5) to register (e.g. `@Party Raid 1` or reply with `1`) or `-` to unregister.',
+    };
+  }
+
+  // CHECK FOR ORGANIZER COMMANDS: +<roleNumber> [@user] or -<roleNumber> [@user]
+  const organizerMatch = remaining.match(/^([+-])\s*#?(\d+)(.*)$/i);
+  if (organizerMatch) {
+    const sign = organizerMatch[1];
+    const roleNum = parseInt(organizerMatch[2], 10);
+    const rest = organizerMatch[3].trim();
+
+    // Check for target user mention or raw user ID in rest
+    const userMentionMatch = rest.match(/<@!?(\d+)>/) || rest.match(/\b(\d{17,20})\b/);
+    const targetUserId = userMentionMatch ? userMentionMatch[1] : undefined;
+    const missingTarget = !targetUserId;
+
+    if (roleNum < 1 || roleNum > 5) {
+      return {
+        isTargetedAtBot: true,
+        isUnregister: false,
+        isOrganizerCommand: true,
+        organizerAction: sign === '+' ? 'ASSIGN' : 'REMOVE',
+        roleNumber: roleNum,
+        targetUserId,
+        missingTarget,
+        error: 'Role number must be between 1 and 5. Check the role list in this thread.',
+      };
+    }
+
+    return {
+      isTargetedAtBot: true,
+      isUnregister: false,
+      isOrganizerCommand: true,
+      organizerAction: sign === '+' ? 'ASSIGN' : 'REMOVE',
+      roleNumber: roleNum,
+      targetUserId,
+      missingTarget,
+      rawToken: `${sign}${roleNum}`,
     };
   }
 

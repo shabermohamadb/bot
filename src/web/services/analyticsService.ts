@@ -628,6 +628,8 @@ export async function getWeeklyReport(offset: number = 0) {
     dayDate.setUTCDate(currentWeek.start.getUTCDate() + idx);
     return {
       day: dayName,
+      dayName: dayName.slice(0, 3),
+      fullDayName: dayName,
       date: toISODate(dayDate),
       shortLabel: dayName.slice(0, 3),
       count: 0,
@@ -657,12 +659,12 @@ export async function getWeeklyReport(offset: number = 0) {
   });
 
   // Busiest day: only set if at least 1 party was hosted
-  let busiestDay: { day: string; date: string; count: number } | null = null;
-  dailyActivity.forEach((b) => {
-    if (b.count > 0 && (!busiestDay || b.count > busiestDay.count)) {
-      busiestDay = { day: b.day, date: b.date, count: b.count };
+  let busiestDayData: { day: string; date: string; count: number } | null = null;
+  for (const b of dailyActivity) {
+    if (b.count > 0 && (!busiestDayData || b.count > busiestDayData.count)) {
+      busiestDayData = { day: b.day, date: b.date, count: b.count };
     }
-  });
+  }
 
   // Leaderboard
   const sortedHosts = Array.from(hostCounts.entries())
@@ -784,7 +786,9 @@ export async function getWeeklyReport(offset: number = 0) {
 
   const report = {
     period: currentWeek,
+    weekRange: currentWeek,
     previousPeriod: prevWeek,
+    prevWeekRange: prevWeek,
     summary: {
       totalParties,
       uniqueHosts: hostCounts.size,
@@ -792,11 +796,14 @@ export async function getWeeklyReport(offset: number = 0) {
       topJoined,
       totalJoined: weekRegistrations.length,
       uniqueParticipants: memberCounts.size,
-      busiestDay,
+      busiestDay: busiestDayData ? busiestDayData.day : '—',
+      busiestDayCount: busiestDayData ? busiestDayData.count : 0,
+      busiestDayData,
       prevWeekCount,
       diffPercentage,
     },
     dailyActivity,
+    dailyBreakdown: dailyActivity,
     leaderboard,
     joinedLeaderboard,
     parties: formattedParties,
@@ -855,11 +862,12 @@ export async function getMonthlyReport(offset: number = 0) {
 
   // Days in this month
   const totalDays = currentMonth.end.getUTCDate();
-  const dailyActivity: Array<{ day: number; date: string; count: number }> = [];
+  const dailyActivity: Array<{ day: number; dayNumber: number; date: string; count: number }> = [];
   for (let i = 1; i <= totalDays; i++) {
     const dayDate = new Date(Date.UTC(currentMonth.year, currentMonth.month - 1, i));
     dailyActivity.push({
       day: i,
+      dayNumber: i,
       date: toISODate(dayDate),
       count: 0,
     });
@@ -895,12 +903,12 @@ export async function getMonthlyReport(offset: number = 0) {
   });
 
   // Busiest day & week: only set if at least 1 party was hosted
-  let busiestDay: { day: number; date: string; count: number } | null = null;
-  dailyActivity.forEach((d) => {
-    if (d.count > 0 && (!busiestDay || d.count > busiestDay.count)) {
-      busiestDay = { day: d.day, date: d.date, count: d.count };
+  let busiestDayData: { day: number; date: string; count: number } | null = null;
+  for (const d of dailyActivity) {
+    if (d.count > 0 && (!busiestDayData || d.count > busiestDayData.count)) {
+      busiestDayData = { day: d.day, date: d.date, count: d.count };
     }
-  });
+  }
 
   let busiestWeek: { weekLabel: string; count: number } | null = null;
   for (let w = 1; w <= 5; w++) {
@@ -909,6 +917,10 @@ export async function getMonthlyReport(offset: number = 0) {
       busiestWeek = { weekLabel: `Week ${w}`, count };
     }
   }
+
+  const busiestDayFormatted = busiestDayData
+    ? `${currentMonth.monthName.slice(0, 3)} ${busiestDayData.day}`
+    : '—';
 
   // Leaderboard
   const sortedHosts = Array.from(hostCounts.entries())
@@ -1001,9 +1013,38 @@ export async function getMonthlyReport(offset: number = 0) {
 
   const topJoined = joinedLeaderboard[0] || null;
 
+  // Format parties
+  const formattedParties = parties.map((p) => {
+    let totalSlots = 0;
+    let registeredCount = 0;
+    p.roles.forEach((r) => {
+      totalSlots += r.capacity;
+      registeredCount += r.registrations.length;
+    });
+
+    const host = userProfiles.get(p.organizerId);
+    return {
+      id: p.id,
+      title: generatePartyTitle(p),
+      rawTitle: p.title,
+      organizerId: p.organizerId,
+      host,
+      activityType: p.activityType,
+      ipRequirement: p.ipRequirement,
+      durationMinutes: p.durationMinutes,
+      status: p.status,
+      registeredCount,
+      totalSlots,
+      createdAt: p.createdAt.toISOString(),
+      formattedDate: formatFullDateTime(p.createdAt),
+    };
+  });
+
   const report = {
     period: currentMonth,
+    monthRange: currentMonth,
     previousPeriod: prevMonth,
+    prevMonthRange: prevMonth,
     summary: {
       totalParties,
       uniqueHosts: hostCounts.size,
@@ -1011,14 +1052,18 @@ export async function getMonthlyReport(offset: number = 0) {
       topJoined,
       totalJoined: monthRegistrations.length,
       uniqueParticipants: memberCounts.size,
-      busiestDay,
+      busiestDay: busiestDayFormatted,
+      busiestDayCount: busiestDayData ? busiestDayData.count : 0,
+      busiestDayData,
       busiestWeek,
       prevMonthCount,
       diffPercentage,
     },
     dailyActivity,
+    dailyBreakdown: dailyActivity,
     leaderboard,
     joinedLeaderboard,
+    parties: formattedParties,
     lastUpdated: new Date().toISOString(),
   };
 

@@ -47,37 +47,45 @@ export function getISOWeekNumber(d: Date): number {
  */
 export function getWeekRange(offset: number = 0, referenceDate: Date = new Date()): WeekRange {
   const ref = new Date(referenceDate);
-  // Get current day of week (0 = Sunday, 1 = Monday, ..., 6 = Saturday)
   const day = ref.getUTCDay();
   // In Monday-Sunday week, Monday is 1, Sunday is 7
   const diffToMonday = (day === 0 ? -6 : 1) - day;
 
-  const monday = new Date(ref);
-  monday.setUTCDate(ref.getUTCDate() + diffToMonday + (offset * 7));
-  monday.setUTCHours(0, 0, 0, 0);
+  const monday = new Date(Date.UTC(
+    ref.getUTCFullYear(),
+    ref.getUTCMonth(),
+    ref.getUTCDate() + diffToMonday + (offset * 7),
+    0, 0, 0, 0
+  ));
 
-  const sunday = new Date(monday);
-  sunday.setUTCDate(monday.getUTCDate() + 6);
-  sunday.setUTCHours(23, 59, 59, 999);
+  const sunday = new Date(Date.UTC(
+    monday.getUTCFullYear(),
+    monday.getUTCMonth(),
+    monday.getUTCDate() + 6,
+    23, 59, 59, 999
+  ));
 
   const startMonth = MONTH_NAMES[monday.getUTCMonth()].slice(0, 3);
   const endMonth = MONTH_NAMES[sunday.getUTCMonth()].slice(0, 3);
   const startDay = monday.getUTCDate();
   const endDay = sunday.getUTCDate();
-  const year = sunday.getUTCFullYear();
+  const startYear = monday.getUTCFullYear();
+  const endYear = sunday.getUTCFullYear();
 
   let label: string;
-  if (startMonth === endMonth) {
-    label = `${startMonth} ${startDay} — ${endDay}, ${year}`;
+  if (startYear !== endYear) {
+    label = `${startMonth} ${startDay}, ${startYear} — ${endMonth} ${endDay}, ${endYear}`;
+  } else if (startMonth === endMonth) {
+    label = `${startMonth} ${startDay} — ${endDay}, ${endYear}`;
   } else {
-    label = `${startMonth} ${startDay} — ${endMonth} ${endDay}, ${year}`;
+    label = `${startMonth} ${startDay} — ${endMonth} ${endDay}, ${endYear}`;
   }
 
   return {
     start: monday,
     end: sunday,
     label,
-    year,
+    year: endYear,
     weekNumber: getISOWeekNumber(monday),
     offset,
   };
@@ -89,21 +97,12 @@ export function getWeekRange(offset: number = 0, referenceDate: Date = new Date(
  */
 export function getMonthRange(offset: number = 0, referenceDate: Date = new Date()): MonthRange {
   const ref = new Date(referenceDate);
-  let year = ref.getUTCFullYear();
-  let month = ref.getUTCMonth() + offset;
-
-  // Handle year roll-over
-  while (month < 0) {
-    month += 12;
-    year -= 1;
-  }
-  while (month > 11) {
-    month -= 12;
-    year += 1;
-  }
+  const targetDate = new Date(Date.UTC(ref.getUTCFullYear(), ref.getUTCMonth() + offset, 1));
+  const year = targetDate.getUTCFullYear();
+  const month = targetDate.getUTCMonth(); // 0-11
 
   const start = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
-  // Day 0 of next month is the last day of the target month
+  // Day 0 of next month is the last day of the target month (handles 28, 29, 30, 31 automatically)
   const end = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59, 999));
 
   const monthName = MONTH_NAMES[month];

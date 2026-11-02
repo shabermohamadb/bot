@@ -149,9 +149,9 @@
     if (state.currentView === 'overview') {
       loadOverview();
     } else if (state.currentView === 'weekly') {
-      loadWeekly(state.weeklyOffset);
+      loadWeeklyReport();
     } else if (state.currentView === 'monthly') {
-      loadMonthly(state.monthlyOffset);
+      loadMonthlyReport();
     } else if (state.currentView === 'leaderboard') {
       loadLeaderboard(state.leaderboardType, state.leaderboardPeriod, state.leaderboardPage, state.leaderboardSearch);
     } else if (state.currentView === 'history') {
@@ -835,72 +835,102 @@
   }
 
   async function loadWeeklyReport() {
+    const rangePill = document.getElementById('weekly-range-pill');
+    const nextBtn = document.getElementById('btn-next-week');
+
+    if (state.weeklyAbortController) {
+      state.weeklyAbortController.abort();
+    }
+    state.weeklyAbortController = new AbortController();
+
+    if (rangePill) rangePill.textContent = 'Loading...';
+
     try {
-      const res = await fetch(`/api/reports/weekly?offset=${state.weeklyOffset}`);
-      if (!res.ok) throw new Error('Failed to load weekly report');
+      const res = await fetch(`/api/reports/weekly?offset=${state.weeklyOffset}`, {
+        signal: state.weeklyAbortController.signal,
+      });
+      if (!res.ok) throw new Error(`Failed to load weekly report (HTTP ${res.status})`);
       const data = await res.json();
 
-      document.getElementById('weekly-range-pill').textContent = data.weekRange.label;
-      const nextBtn = document.getElementById('btn-next-week');
+      const rangeLabel = data?.weekRange?.label || data?.period?.label || 'Weekly Report';
+      if (rangePill) rangePill.textContent = rangeLabel;
       if (nextBtn) nextBtn.disabled = state.weeklyOffset >= 0;
 
-      animateCount('wk-total-parties', data.summary.totalParties);
-      animateCount('wk-unique-hosts', data.summary.uniqueHosts);
-      document.getElementById('wk-busiest-day').textContent = data.summary.busiestDay || '—';
-      document.getElementById('wk-busiest-count').textContent = data.summary.busiestDayCount ? `${data.summary.busiestDayCount} runs` : 'No runs';
+      const summary = data?.summary || {};
+      animateCount('wk-total-parties', summary.totalParties ?? 0);
+      animateCount('wk-unique-hosts', summary.uniqueHosts ?? 0);
+
+      const bDay = typeof summary.busiestDay === 'object' && summary.busiestDay ? summary.busiestDay.day : summary.busiestDay;
+      const bCount = summary.busiestDayCount ?? (summary.busiestDayData?.count ?? (typeof summary.busiestDay === 'object' ? summary.busiestDay?.count : 0));
+
+      const busiestDayElem = document.getElementById('wk-busiest-day');
+      if (busiestDayElem) busiestDayElem.textContent = bDay || '—';
+      const busiestCountElem = document.getElementById('wk-busiest-count');
+      if (busiestCountElem) busiestCountElem.textContent = bCount > 0 ? `${bCount} runs` : 'No runs';
 
       // Comparison badge
       const diffElem = document.getElementById('wk-diff-badge');
       if (diffElem) {
-        const diff = data.summary.diffPercentage;
-        if (diff === null) {
-          diffElem.innerHTML = `<span class="badge-diff-na">No previous week data</span> (${data.summary.prevWeekCount} runs)`;
+        const diff = summary.diffPercentage;
+        const prevCount = summary.prevWeekCount ?? 0;
+        if (diff === null || diff === undefined) {
+          diffElem.innerHTML = `<span class="badge-diff-na">No previous week data</span> (${prevCount} runs)`;
         } else if (diff > 0) {
-          diffElem.innerHTML = `<span class="badge-diff-pos">+${diff}%</span> vs last week (${data.summary.prevWeekCount} runs)`;
+          diffElem.innerHTML = `<span class="badge-diff-pos">+${diff}%</span> vs last week (${prevCount} runs)`;
         } else if (diff < 0) {
-          diffElem.innerHTML = `<span class="badge-diff-neg">${diff}%</span> vs last week (${data.summary.prevWeekCount} runs)`;
+          diffElem.innerHTML = `<span class="badge-diff-neg">${diff}%</span> vs last week (${prevCount} runs)`;
         } else {
-          diffElem.innerHTML = `<span>0%</span> vs last week (${data.summary.prevWeekCount} runs)`;
+          diffElem.innerHTML = `<span>0%</span> vs last week (${prevCount} runs)`;
         }
       }
 
       // Host of week
-      if (data.summary.topHost) {
-        document.getElementById('wk-top-host-avatar').src = data.summary.topHost.avatarUrl;
-        document.getElementById('wk-top-host-name').textContent = data.summary.topHost.displayName;
-        document.getElementById('wk-top-host-count').textContent = `${data.summary.topHost.partyCount} runs`;
+      const topHostAvatar = document.getElementById('wk-top-host-avatar');
+      const topHostName = document.getElementById('wk-top-host-name');
+      const topHostCount = document.getElementById('wk-top-host-count');
+      if (summary.topHost) {
+        if (topHostAvatar) topHostAvatar.src = summary.topHost.avatarUrl || 'https://cdn.discordapp.com/embed/avatars/0.png';
+        if (topHostName) topHostName.textContent = summary.topHost.displayName || summary.topHost.username || '—';
+        if (topHostCount) topHostCount.textContent = `${summary.topHost.partyCount} runs`;
       } else {
-        document.getElementById('wk-top-host-name').textContent = 'No host data';
-        document.getElementById('wk-top-host-count').textContent = '—';
+        if (topHostAvatar) topHostAvatar.src = 'https://cdn.discordapp.com/embed/avatars/0.png';
+        if (topHostName) topHostName.textContent = 'No host data';
+        if (topHostCount) topHostCount.textContent = '—';
       }
 
       // Most joined this week
-      if (data.summary.topJoined) {
-        document.getElementById('wk-top-joined-avatar').src = data.summary.topJoined.avatarUrl;
-        document.getElementById('wk-top-joined-name').textContent = data.summary.topJoined.displayName;
-        document.getElementById('wk-top-joined-count').textContent = `${data.summary.topJoined.joinedCount} joined`;
+      const topJoinedAvatar = document.getElementById('wk-top-joined-avatar');
+      const topJoinedName = document.getElementById('wk-top-joined-name');
+      const topJoinedCount = document.getElementById('wk-top-joined-count');
+      if (summary.topJoined) {
+        if (topJoinedAvatar) topJoinedAvatar.src = summary.topJoined.avatarUrl || 'https://cdn.discordapp.com/embed/avatars/0.png';
+        if (topJoinedName) topJoinedName.textContent = summary.topJoined.displayName || summary.topJoined.username || '—';
+        if (topJoinedCount) topJoinedCount.textContent = `${summary.topJoined.joinedCount} joined`;
       } else {
-        document.getElementById('wk-top-joined-name').textContent = 'No participant data';
-        document.getElementById('wk-top-joined-count').textContent = '—';
+        if (topJoinedAvatar) topJoinedAvatar.src = 'https://cdn.discordapp.com/embed/avatars/0.png';
+        if (topJoinedName) topJoinedName.textContent = 'No participant data';
+        if (topJoinedCount) topJoinedCount.textContent = '—';
       }
 
-      renderBarChart('weeklyChart', data.dailyBreakdown, 'count', 'dayName', 'No parties hosted this week.');
+      const chartData = data?.dailyBreakdown || data?.dailyActivity || [];
+      renderBarChart('weeklyChart', chartData, 'count', 'dayName', 'No parties hosted this week.');
 
       // Weekly host leaderboard
       const tbody = document.getElementById('wk-leaderboard-tbody');
       if (tbody) {
-        if (!data.leaderboard || data.leaderboard.length === 0) {
+        const hosts = data.leaderboard || [];
+        if (hosts.length === 0) {
           tbody.innerHTML = '<tr><td colspan="5" class="empty-state-cell">No parties hosted this week.</td></tr>';
         } else {
-          tbody.innerHTML = data.leaderboard
+          tbody.innerHTML = hosts
             .map(
               (h) => `
               <tr>
                 <td><span class="rank-badge rank-${h.rank}">${h.rank}</span></td>
                 <td>
                   <div class="host-cell">
-                    <img class="avatar-xs" src="${escapeHTML(h.avatarUrl)}" alt="Avatar" loading="lazy">
-                    <span class="cell-bold">${escapeHTML(h.displayName)}</span>
+                    <img class="avatar-xs" src="${escapeHTML(h.avatarUrl || 'https://cdn.discordapp.com/embed/avatars/0.png')}" alt="Avatar" loading="lazy">
+                    <span class="cell-bold">${escapeHTML(h.displayName || h.username || '—')}</span>
                   </div>
                 </td>
                 <td class="font-mono text-gold">${h.partyCount}</td>
@@ -918,18 +948,19 @@
       // Weekly joined leaderboard
       const joinedTbody = document.getElementById('wk-joined-leaderboard-tbody');
       if (joinedTbody) {
-        if (!data.joinedLeaderboard || data.joinedLeaderboard.length === 0) {
+        const members = data.joinedLeaderboard || [];
+        if (members.length === 0) {
           joinedTbody.innerHTML = '<tr><td colspan="6" class="empty-state-cell">No members joined parties this week.</td></tr>';
         } else {
-          joinedTbody.innerHTML = data.joinedLeaderboard
+          joinedTbody.innerHTML = members
             .map(
               (m) => `
               <tr>
                 <td><span class="rank-badge rank-${m.rank}">${m.rank}</span></td>
                 <td>
                   <div class="host-cell">
-                    <img class="avatar-xs" src="${escapeHTML(m.avatarUrl)}" alt="Avatar" loading="lazy">
-                    <span class="cell-bold">${escapeHTML(m.displayName)}</span>
+                    <img class="avatar-xs" src="${escapeHTML(m.avatarUrl || 'https://cdn.discordapp.com/embed/avatars/0.png')}" alt="Avatar" loading="lazy">
+                    <span class="cell-bold">${escapeHTML(m.displayName || m.username || '—')}</span>
                   </div>
                 </td>
                 <td class="font-mono text-gold">${m.joinedCount}</td>
@@ -945,7 +976,18 @@
         }
       }
     } catch (err) {
-      console.error(err);
+      if (err.name === 'AbortError') return;
+      console.error('Error loading weekly report:', err);
+      if (rangePill) rangePill.textContent = 'Error loading';
+      renderChartError('weeklyChart', 'Failed to load weekly report data. Please check your connection.');
+      const tbody = document.getElementById('wk-leaderboard-tbody');
+      if (tbody) {
+        tbody.innerHTML = `<tr><td colspan="5" class="empty-state-cell text-error">Failed to load weekly hosts. <button class="btn-period" onclick="loadWeeklyReport()">Retry</button></td></tr>`;
+      }
+      const joinedTbody = document.getElementById('wk-joined-leaderboard-tbody');
+      if (joinedTbody) {
+        joinedTbody.innerHTML = `<tr><td colspan="6" class="empty-state-cell text-error">Failed to load weekly participants. <button class="btn-period" onclick="loadWeeklyReport()">Retry</button></td></tr>`;
+      }
     }
   }
 
@@ -980,69 +1022,102 @@
   }
 
   async function loadMonthlyReport() {
+    const rangePill = document.getElementById('monthly-range-pill');
+    const nextBtn = document.getElementById('btn-next-month');
+
+    if (state.monthlyAbortController) {
+      state.monthlyAbortController.abort();
+    }
+    state.monthlyAbortController = new AbortController();
+
+    if (rangePill) rangePill.textContent = 'Loading...';
+
     try {
-      const res = await fetch(`/api/reports/monthly?offset=${state.monthlyOffset}`);
-      if (!res.ok) throw new Error('Failed to load monthly report');
+      const res = await fetch(`/api/reports/monthly?offset=${state.monthlyOffset}`, {
+        signal: state.monthlyAbortController.signal,
+      });
+      if (!res.ok) throw new Error(`Failed to load monthly report (HTTP ${res.status})`);
       const data = await res.json();
 
-      document.getElementById('monthly-range-pill').textContent = data.monthRange.label;
-      const nextBtn = document.getElementById('btn-next-month');
+      const rangeLabel = data?.monthRange?.label || data?.period?.label || 'Monthly Report';
+      if (rangePill) rangePill.textContent = rangeLabel;
       if (nextBtn) nextBtn.disabled = state.monthlyOffset >= 0;
 
-      animateCount('mo-total-parties', data.summary.totalParties);
-      animateCount('mo-unique-hosts', data.summary.uniqueHosts);
-      document.getElementById('mo-busiest-day').textContent = data.summary.busiestDay || '—';
-      document.getElementById('mo-busiest-day-count').textContent = data.summary.busiestDayCount ? `${data.summary.busiestDayCount} runs` : 'No runs';
+      const summary = data?.summary || {};
+      animateCount('mo-total-parties', summary.totalParties ?? 0);
+      animateCount('mo-unique-hosts', summary.uniqueHosts ?? 0);
+
+      const bDay = typeof summary.busiestDay === 'object' && summary.busiestDay ? summary.busiestDay.day : summary.busiestDay;
+      const bCount = summary.busiestDayCount ?? (summary.busiestDayData?.count ?? (typeof summary.busiestDay === 'object' ? summary.busiestDay?.count : 0));
+
+      const busiestDayElem = document.getElementById('mo-busiest-day');
+      if (busiestDayElem) busiestDayElem.textContent = bDay || '—';
+      const busiestCountElem = document.getElementById('mo-busiest-day-count');
+      if (busiestCountElem) busiestCountElem.textContent = bCount > 0 ? `${bCount} runs` : 'No runs';
 
       // Comparison badge
       const diffElem = document.getElementById('mo-diff-badge');
       if (diffElem) {
-        const diff = data.summary.diffPercentage;
-        if (diff === null) {
-          diffElem.innerHTML = `<span class="badge-diff-na">No previous month data</span> (${data.summary.prevMonthCount} runs)`;
+        const diff = summary.diffPercentage;
+        const prevCount = summary.prevMonthCount ?? 0;
+        if (diff === null || diff === undefined) {
+          diffElem.innerHTML = `<span class="badge-diff-na">No previous month data</span> (${prevCount} runs)`;
         } else if (diff > 0) {
-          diffElem.innerHTML = `<span class="badge-diff-pos">+${diff}%</span> vs last month (${data.summary.prevMonthCount} runs)`;
+          diffElem.innerHTML = `<span class="badge-diff-pos">+${diff}%</span> vs last month (${prevCount} runs)`;
         } else if (diff < 0) {
-          diffElem.innerHTML = `<span class="badge-diff-neg">${diff}%</span> vs last month (${data.summary.prevMonthCount} runs)`;
+          diffElem.innerHTML = `<span class="badge-diff-neg">${diff}%</span> vs last month (${prevCount} runs)`;
         } else {
-          diffElem.innerHTML = `<span>0%</span> vs last month (${data.summary.prevMonthCount} runs)`;
+          diffElem.innerHTML = `<span>0%</span> vs last month (${prevCount} runs)`;
         }
       }
 
-      if (data.summary.topHost) {
-        document.getElementById('mo-top-host-avatar').src = data.summary.topHost.avatarUrl;
-        document.getElementById('mo-top-host-name').textContent = data.summary.topHost.displayName;
-        document.getElementById('mo-top-host-count').textContent = `${data.summary.topHost.partyCount} runs`;
+      // Host of month
+      const topHostAvatar = document.getElementById('mo-top-host-avatar');
+      const topHostName = document.getElementById('mo-top-host-name');
+      const topHostCount = document.getElementById('mo-top-host-count');
+      if (summary.topHost) {
+        if (topHostAvatar) topHostAvatar.src = summary.topHost.avatarUrl || 'https://cdn.discordapp.com/embed/avatars/0.png';
+        if (topHostName) topHostName.textContent = summary.topHost.displayName || summary.topHost.username || '—';
+        if (topHostCount) topHostCount.textContent = `${summary.topHost.partyCount} runs`;
       } else {
-        document.getElementById('mo-top-host-name').textContent = 'No host data';
-        document.getElementById('mo-top-host-count').textContent = '—';
+        if (topHostAvatar) topHostAvatar.src = 'https://cdn.discordapp.com/embed/avatars/0.png';
+        if (topHostName) topHostName.textContent = 'No host data';
+        if (topHostCount) topHostCount.textContent = '—';
       }
 
-      if (data.summary.topJoined) {
-        document.getElementById('mo-top-joined-avatar').src = data.summary.topJoined.avatarUrl;
-        document.getElementById('mo-top-joined-name').textContent = data.summary.topJoined.displayName;
-        document.getElementById('mo-top-joined-count').textContent = `${data.summary.topJoined.joinedCount} joined`;
+      // Most joined this month
+      const topJoinedAvatar = document.getElementById('mo-top-joined-avatar');
+      const topJoinedName = document.getElementById('mo-top-joined-name');
+      const topJoinedCount = document.getElementById('mo-top-joined-count');
+      if (summary.topJoined) {
+        if (topJoinedAvatar) topJoinedAvatar.src = summary.topJoined.avatarUrl || 'https://cdn.discordapp.com/embed/avatars/0.png';
+        if (topJoinedName) topJoinedName.textContent = summary.topJoined.displayName || summary.topJoined.username || '—';
+        if (topJoinedCount) topJoinedCount.textContent = `${summary.topJoined.joinedCount} joined`;
       } else {
-        document.getElementById('mo-top-joined-name').textContent = 'No participant data';
-        document.getElementById('mo-top-joined-count').textContent = '—';
+        if (topJoinedAvatar) topJoinedAvatar.src = 'https://cdn.discordapp.com/embed/avatars/0.png';
+        if (topJoinedName) topJoinedName.textContent = 'No participant data';
+        if (topJoinedCount) topJoinedCount.textContent = '—';
       }
 
-      renderBarChart('monthlyChart', data.dailyBreakdown, 'count', 'dayNumber', 'No parties hosted this month.');
+      const chartData = data?.dailyBreakdown || data?.dailyActivity || [];
+      renderBarChart('monthlyChart', chartData, 'count', 'dayNumber', 'No parties hosted this month.');
 
+      // Monthly host leaderboard
       const tbody = document.getElementById('mo-leaderboard-tbody');
       if (tbody) {
-        if (!data.leaderboard || data.leaderboard.length === 0) {
+        const hosts = data.leaderboard || [];
+        if (hosts.length === 0) {
           tbody.innerHTML = '<tr><td colspan="5" class="empty-state-cell">No parties hosted this month.</td></tr>';
         } else {
-          tbody.innerHTML = data.leaderboard
+          tbody.innerHTML = hosts
             .map(
               (h) => `
               <tr>
                 <td><span class="rank-badge rank-${h.rank}">${h.rank}</span></td>
                 <td>
                   <div class="host-cell">
-                    <img class="avatar-xs" src="${escapeHTML(h.avatarUrl)}" alt="Avatar" loading="lazy">
-                    <span class="cell-bold">${escapeHTML(h.displayName)}</span>
+                    <img class="avatar-xs" src="${escapeHTML(h.avatarUrl || 'https://cdn.discordapp.com/embed/avatars/0.png')}" alt="Avatar" loading="lazy">
+                    <span class="cell-bold">${escapeHTML(h.displayName || h.username || '—')}</span>
                   </div>
                 </td>
                 <td class="font-mono text-gold">${h.partyCount}</td>
@@ -1057,20 +1132,22 @@
         }
       }
 
+      // Monthly joined leaderboard
       const joinedTbody = document.getElementById('mo-joined-leaderboard-tbody');
       if (joinedTbody) {
-        if (!data.joinedLeaderboard || data.joinedLeaderboard.length === 0) {
+        const members = data.joinedLeaderboard || [];
+        if (members.length === 0) {
           joinedTbody.innerHTML = '<tr><td colspan="6" class="empty-state-cell">No members joined parties this month.</td></tr>';
         } else {
-          joinedTbody.innerHTML = data.joinedLeaderboard
+          joinedTbody.innerHTML = members
             .map(
               (m) => `
               <tr>
                 <td><span class="rank-badge rank-${m.rank}">${m.rank}</span></td>
                 <td>
                   <div class="host-cell">
-                    <img class="avatar-xs" src="${escapeHTML(m.avatarUrl)}" alt="Avatar" loading="lazy">
-                    <span class="cell-bold">${escapeHTML(m.displayName)}</span>
+                    <img class="avatar-xs" src="${escapeHTML(m.avatarUrl || 'https://cdn.discordapp.com/embed/avatars/0.png')}" alt="Avatar" loading="lazy">
+                    <span class="cell-bold">${escapeHTML(m.displayName || m.username || '—')}</span>
                   </div>
                 </td>
                 <td class="font-mono text-gold">${m.joinedCount}</td>
@@ -1086,7 +1163,18 @@
         }
       }
     } catch (err) {
-      console.error(err);
+      if (err.name === 'AbortError') return;
+      console.error('Error loading monthly report:', err);
+      if (rangePill) rangePill.textContent = 'Error loading';
+      renderChartError('monthlyChart', 'Failed to load monthly report data. Please check your connection.');
+      const tbody = document.getElementById('mo-leaderboard-tbody');
+      if (tbody) {
+        tbody.innerHTML = `<tr><td colspan="5" class="empty-state-cell text-error">Failed to load monthly hosts. <button class="btn-period" onclick="loadMonthlyReport()">Retry</button></td></tr>`;
+      }
+      const joinedTbody = document.getElementById('mo-joined-leaderboard-tbody');
+      if (joinedTbody) {
+        joinedTbody.innerHTML = `<tr><td colspan="6" class="empty-state-cell text-error">Failed to load monthly participants. <button class="btn-period" onclick="loadMonthlyReport()">Retry</button></td></tr>`;
+      }
     }
   }
 
@@ -1956,6 +2044,10 @@
     }
     requestAnimationFrame(loop);
   }
+
+  // Expose global handlers for template onclick handlers
+  window.loadWeeklyReport = loadWeeklyReport;
+  window.loadMonthlyReport = loadMonthlyReport;
 
   // Boot client
   if (document.readyState === 'loading') {

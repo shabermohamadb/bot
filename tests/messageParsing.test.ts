@@ -212,4 +212,80 @@ describe('Message Parsing Tests — Dual Registration Methods', () => {
       expect(parseRegistrationMessage('We need 1 more DPS', options).isTargetedAtBot).toBe(false);
     });
   });
+
+  describe('4. Organizer Registration Management Commands', () => {
+    it('Parses assign command with user mention: @Raid Master +2 @Shaber', () => {
+      const res = parseRegistrationMessage('@Raid Master +2 <@1438025229774618734>', options);
+      expect(res.isTargetedAtBot).toBe(true);
+      expect(res.isOrganizerCommand).toBe(true);
+      expect(res.organizerAction).toBe('ASSIGN');
+      expect(res.roleNumber).toBe(2);
+      expect(res.targetUserId).toBe('1438025229774618734');
+      expect(res.missingTarget).toBe(false);
+    });
+
+    it('Parses assign command with raw snowflake ID: @Party Raid +1 1006451389905502242', () => {
+      const res = parseRegistrationMessage('@Party Raid +1 1006451389905502242', options);
+      expect(res.isTargetedAtBot).toBe(true);
+      expect(res.isOrganizerCommand).toBe(true);
+      expect(res.organizerAction).toBe('ASSIGN');
+      expect(res.roleNumber).toBe(1);
+      expect(res.targetUserId).toBe('1006451389905502242');
+      expect(res.missingTarget).toBe(false);
+    });
+
+    it('Parses remove command with user mention: @Raid Master -5 @Shaber', () => {
+      const res = parseRegistrationMessage('@Raid Master -5 <@1438025229774618734>', options);
+      expect(res.isTargetedAtBot).toBe(true);
+      expect(res.isOrganizerCommand).toBe(true);
+      expect(res.organizerAction).toBe('REMOVE');
+      expect(res.roleNumber).toBe(5);
+      expect(res.targetUserId).toBe('1438025229774618734');
+      expect(res.missingTarget).toBe(false);
+    });
+
+    it('Detects missing target when organizer sends @Raid Master -5 without user mention', () => {
+      const res = parseRegistrationMessage('@Raid Master -5', options);
+      expect(res.isTargetedAtBot).toBe(true);
+      expect(res.isOrganizerCommand).toBe(true);
+      expect(res.organizerAction).toBe('REMOVE');
+      expect(res.roleNumber).toBe(5);
+      expect(res.missingTarget).toBe(true);
+    });
+
+    it('Detects missing target when organizer sends @Party Raid +2 without user mention', () => {
+      const res = parseRegistrationMessage('@Party Raid +2', options);
+      expect(res.isTargetedAtBot).toBe(true);
+      expect(res.isOrganizerCommand).toBe(true);
+      expect(res.organizerAction).toBe('ASSIGN');
+      expect(res.roleNumber).toBe(2);
+      expect(res.missingTarget).toBe(true);
+    });
+
+    it('Validates role number range (1-5) on organizer commands: rejects +0 and +6', () => {
+      const res0 = parseRegistrationMessage('@Raid Master +0 <@1438025229774618734>', options);
+      expect(res0.isOrganizerCommand).toBe(true);
+      expect(res0.error).toContain('Role number must be between 1 and 5');
+
+      const res6 = parseRegistrationMessage('@Raid Master -6 <@1438025229774618734>', options);
+      expect(res6.isOrganizerCommand).toBe(true);
+      expect(res6.error).toContain('Role number must be between 1 and 5');
+    });
+
+    it('Parses reply-based organizer commands: +2 @user and -5 @user', () => {
+      const replyOptions = { ...options, isReplyToBot: true };
+
+      const resAssign = parseRegistrationMessage('+2 <@1438025229774618734>', replyOptions);
+      expect(resAssign.isOrganizerCommand).toBe(true);
+      expect(resAssign.organizerAction).toBe('ASSIGN');
+      expect(resAssign.roleNumber).toBe(2);
+      expect(resAssign.targetUserId).toBe('1438025229774618734');
+
+      const resRemove = parseRegistrationMessage('-5 <@1438025229774618734>', replyOptions);
+      expect(resRemove.isOrganizerCommand).toBe(true);
+      expect(resRemove.organizerAction).toBe('REMOVE');
+      expect(resRemove.roleNumber).toBe(5);
+      expect(resRemove.targetUserId).toBe('1438025229774618734');
+    });
+  });
 });

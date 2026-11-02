@@ -62,10 +62,33 @@ export async function resolveDiscordUser(userId: string): Promise<DiscordUserPro
     avatarUrl: getDefaultAvatarUrl(userId),
   };
 
-  // 2. Fetch from Discord if client is available
+  // 2. Check Discord.js Client memory cache
   if (discordClientRef && discordClientRef.isReady()) {
     try {
-      const user = await discordClientRef.users.fetch(userId);
+      const cachedDiscordUser = discordClientRef.users.cache.get(userId);
+      if (cachedDiscordUser) {
+        const avatarUrl = cachedDiscordUser.displayAvatarURL({ size: 128, extension: 'png' }) || getDefaultAvatarUrl(userId);
+        const profile: DiscordUserProfile = {
+          userId: cachedDiscordUser.id,
+          username: cachedDiscordUser.username,
+          displayName: cachedDiscordUser.displayName || cachedDiscordUser.username,
+          avatarUrl,
+        };
+        userCache.set(userId, { profile, cachedAt: Date.now() });
+        return profile;
+      }
+
+      // Check if userId is a valid Discord snowflake (17-20 digits)
+      if (!/^\d{17,20}$/.test(userId)) {
+        userCache.set(userId, { profile: fallbackProfile, cachedAt: Date.now() });
+        return fallbackProfile;
+      }
+
+      // Fetch from Discord REST API with 1500ms timeout race to prevent blocking
+      const fetchPromise = discordClientRef.users.fetch(userId);
+      const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500));
+      const user = await Promise.race([fetchPromise, timeoutPromise]);
+
       if (user) {
         const avatarUrl = user.displayAvatarURL({ size: 128, extension: 'png' }) || getDefaultAvatarUrl(userId);
         const profile: DiscordUserProfile = {

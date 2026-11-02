@@ -408,3 +408,391 @@ export async function unregisterUser(
     throw error;
   }
 }
+
+export interface OrganizerAssignInput {
+  partyId: string;
+  organizerId: string;
+  targetUserId: string;
+  roleNumber: number;
+  guildId: string;
+  cachedParty?: PartyWithRelations | null;
+}
+
+export interface OrganizerRemoveInput {
+  partyId: string;
+  organizerId: string;
+  targetUserId: string;
+  roleNumber: number;
+  guildId: string;
+  cachedParty?: PartyWithRelations | null;
+}
+
+export interface OrganizerRegistrationResult {
+  success: boolean;
+  message: string;
+  party: PartyWithRelations;
+  action: 'ASSIGNED' | 'MOVED' | 'ALREADY_REGISTERED' | 'REMOVED' | 'REJECTED';
+  errorReason?: 'ROLE_FULL' | 'PARTY_NOT_OPEN' | 'INVALID_ROLE' | 'NOT_REGISTERED' | 'WRONG_ROLE' | 'INTERNAL_ERROR';
+  roleNumber?: number;
+  roleName?: string;
+  previousRoleNumber?: number;
+  previousRoleName?: string;
+  actualRoleNumber?: number;
+  actualRoleName?: string;
+}
+
+/**
+ * Assigns or moves a target member to a role by party organizer.
+ * Enforces role capacity, atomic role switching, and records audit logs.
+ */
+export async function organizerAssignRole(
+  input: OrganizerAssignInput
+): Promise<OrganizerRegistrationResult> {
+  const { partyId, organizerId, targetUserId, roleNumber, guildId, cachedParty } = input;
+  const party = cachedParty || (await getPartyById(partyId));
+
+  if (!party) {
+    return {
+      success: false,
+      message: 'Party not found.',
+      party: null as any,
+      action: 'REJECTED',
+      errorReason: 'INTERNAL_ERROR',
+    };
+  }
+
+  if (party.status !== 'OPEN') {
+    return {
+      success: false,
+      message: `Cannot assign: this party is currently **${party.status.toLowerCase()}**.`,
+      party,
+      action: 'REJECTED',
+      errorReason: 'PARTY_NOT_OPEN',
+    };
+  }
+
+  const targetRole = party.roles.find((r) => r.roleNumber === roleNumber);
+  if (!targetRole) {
+    return {
+      success: false,
+      message: `Invalid role number **${roleNumber}**.`,
+      party,
+      action: 'REJECTED',
+      errorReason: 'INVALID_ROLE',
+    };
+  }
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      // Row-level lock on the target role
+      try {
+        await tx.$queryRaw`SELECT id FROM "PartyRole" WHERE id = ${targetRole.id} FOR UPDATE`;
+      } catch {
+        // Safe fallback
+      }
+
+      const [liveTargetRole, liveRegistration] = await Promise.all([
+        tx.partyRole.findUnique({
+          where: {
+            partyId_roleNumber: {
+              partyId,
+              roleNumber,
+            },
+          },
+          include: {
+            registrations: true,
+          },
+        }),
+        tx.partyRegistration.findUnique({
+          where: {
+            partyId_userId: {
+              partyId,
+              userId: targetUserId,
+            },
+          },
+          include: {
+            role: true,
+          },
+        }),
+      ]);
+
+      if (!liveTargetRole) {
+        throw new Error('Target role not found');
+      }
+
+      // If user is already registered for this exact role
+      if (liveRegistration && liveRegistration.roleId === liveTargetRole.id) {
+        return {
+          action: 'ALREADY_REGISTERED' as const,
+          roleNumber: liveTargetRole.roleNumber,
+          roleName: liveTargetRole.roleName,
+          previousRoleNumber: undefined,
+          previousRoleName: undefined,
+          updatedParty: party,
+        };
+      }
+
+      const currentCount = liveTargetRole.registrations.length;
+
+      // Check capacity
+      if (currentCount >= liveTargetRole.capacity) {
+        const currentRole = liveRegistration?.role;
+        const currentRoleName = currentRole ? currentRole.roleName : '';
+        throw new RoleFullError(
+          `Role **${liveTargetRole.roleName}** is full (${currentCount}/${liveTargetRole.capacity}).` +
+            (liveRegistration ? ` <@${targetUserId}> remains registered as **${currentRoleName}**.` : ''),
+          liveTargetRole.roleName
+        );
+      }
+
+      let action: 'ASSIGNED' | 'MOVED';
+      let previousRoleNumber: number | undefined;
+      let previousRoleName: string | undefined;
+
+      if (liveRegistration) {
+        action = 'MOVED';
+        previousRoleNumber = liveRegistration.role?.roleNumber;
+        previousRoleName = liveRegistration.role?.roleName;
+
+        await tx.partyRegistration.update({
+          where: { id: liveRegistration.id },
+          data: {
+            roleId: liveTargetRole.id,
+          },
+        });
+      } else {
+        action = 'ASSIGNED';
+        await tx.partyRegistration.create({
+          data: {
+            partyId,
+            roleId: liveTargetRole.id,
+            userId: targetUserId,
+          },
+        });
+      }
+
+      const updatedParty = await tx.party.findUnique({
+        where: { id: partyId },
+        include: {
+          roles: {
+            include: {
+              registrations: true,
+            },
+          },
+          registrations: true,
+        },
+      });
+
+      return {
+        action,
+        roleNumber: liveTargetRole.roleNumber,
+        roleName: liveTargetRole.roleName,
+        previousRoleNumber,
+        previousRoleName,
+        updatedParty: updatedParty!,
+      };
+    }, { maxWait: 10000, timeout: 20000 });
+
+    const updatedParty = result.updatedParty;
+
+    if (result.action !== 'ALREADY_REGISTERED') {
+      logAuditEvent({
+        guildId,
+        partyId,
+        actorId: organizerId,
+        action: result.action === 'MOVED' ? 'ORGANIZER_MOVE' : 'ORGANIZER_ASSIGN',
+        previousValue: result.previousRoleName
+          ? `Role ${result.previousRoleNumber} (${result.previousRoleName}) [Target: ${targetUserId}]`
+          : null,
+        newValue: `Role ${result.roleNumber} (${result.roleName}) [Target: ${targetUserId}]`,
+      }).catch((err) => logger.warn({ err }, 'Non-blocking organizer assign audit log failed'));
+
+      if (updatedParty?.threadId) {
+        updateThreadPartyCache(updatedParty.threadId, updatedParty);
+      }
+
+      publishDashboardEvent('registration:created', partyId, {
+        userId: targetUserId,
+        roleNumber: targetRole.roleNumber,
+        roleName: targetRole.roleName,
+        organizerId,
+      });
+    }
+
+    if (result.action === 'ALREADY_REGISTERED') {
+      return {
+        success: true,
+        message: `<@${targetUserId}> is already registered as ${targetRole.roleName.toUpperCase()}.`,
+        party: updatedParty,
+        action: 'ALREADY_REGISTERED',
+        roleNumber: targetRole.roleNumber,
+        roleName: targetRole.roleName,
+      };
+    }
+
+    return {
+      success: true,
+      message: `<@${targetUserId}> has been assigned to ${targetRole.roleName.toUpperCase()} by <@${organizerId}>.`,
+      party: updatedParty,
+      action: result.action,
+      roleNumber: targetRole.roleNumber,
+      roleName: targetRole.roleName,
+      previousRoleNumber: result.previousRoleNumber,
+      previousRoleName: result.previousRoleName,
+    };
+  } catch (error: any) {
+    if (error instanceof RoleFullError) {
+      return {
+        success: false,
+        message: error.message,
+        party: (await getPartyById(partyId)) || party,
+        action: 'REJECTED',
+        errorReason: 'ROLE_FULL',
+        roleNumber: targetRole.roleNumber,
+        roleName: error.roleName || targetRole.roleName,
+      };
+    }
+
+    logger.error({ error, partyId, organizerId, targetUserId, roleNumber }, 'Failed in organizerAssignRole');
+    throw error;
+  }
+}
+
+/**
+ * Removes a member from a specified role by party organizer.
+ * Verifies that the user is currently registered in the specified role.
+ */
+export async function organizerRemoveRole(
+  input: OrganizerRemoveInput
+): Promise<OrganizerRegistrationResult> {
+  const { partyId, organizerId, targetUserId, roleNumber, guildId, cachedParty } = input;
+  const party = cachedParty || (await getPartyById(partyId));
+
+  if (!party) {
+    return {
+      success: false,
+      message: 'Party not found.',
+      party: null as any,
+      action: 'REJECTED',
+      errorReason: 'INTERNAL_ERROR',
+    };
+  }
+
+  const targetRole = party.roles.find((r) => r.roleNumber === roleNumber);
+  if (!targetRole) {
+    return {
+      success: false,
+      message: `Invalid role number **${roleNumber}**.`,
+      party,
+      action: 'REJECTED',
+      errorReason: 'INVALID_ROLE',
+    };
+  }
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const existing = await tx.partyRegistration.findUnique({
+        where: {
+          partyId_userId: {
+            partyId,
+            userId: targetUserId,
+          },
+        },
+        include: {
+          role: true,
+        },
+      });
+
+      if (!existing) {
+        return { status: 'NOT_REGISTERED' as const };
+      }
+
+      // Verify that user is registered in the specified role
+      if (existing.roleId !== targetRole.id) {
+        return {
+          status: 'WRONG_ROLE' as const,
+          actualRoleNumber: existing.role.roleNumber,
+          actualRoleName: existing.role.roleName,
+        };
+      }
+
+      await tx.partyRegistration.delete({
+        where: { id: existing.id },
+      });
+
+      const updatedParty = await tx.party.findUnique({
+        where: { id: partyId },
+        include: {
+          roles: {
+            include: {
+              registrations: true,
+            },
+          },
+          registrations: true,
+        },
+      });
+
+      return {
+        status: 'SUCCESS' as const,
+        removedRole: existing.role,
+        updatedParty: updatedParty!,
+      };
+    }, { maxWait: 10000, timeout: 20000 });
+
+    if (result.status === 'NOT_REGISTERED') {
+      return {
+        success: false,
+        message: `<@${targetUserId}> is not currently registered for this party.`,
+        party,
+        action: 'REJECTED',
+        errorReason: 'NOT_REGISTERED',
+      };
+    }
+
+    if (result.status === 'WRONG_ROLE') {
+      return {
+        success: false,
+        message: `<@${targetUserId}> is registered as ${result.actualRoleName?.toUpperCase()}, not ${targetRole.roleName.toUpperCase()}.`,
+        party,
+        action: 'REJECTED',
+        errorReason: 'WRONG_ROLE',
+        actualRoleNumber: result.actualRoleNumber,
+        actualRoleName: result.actualRoleName,
+      };
+    }
+
+    const { removedRole, updatedParty } = result;
+
+    logAuditEvent({
+      guildId,
+      partyId,
+      actorId: organizerId,
+      action: 'ORGANIZER_REMOVE',
+      previousValue: `Role ${removedRole.roleNumber} (${removedRole.roleName}) [Target: ${targetUserId}]`,
+      newValue: null,
+    }).catch((err) => logger.warn({ err }, 'Non-blocking organizer remove audit log failed'));
+
+    if (updatedParty.threadId) {
+      updateThreadPartyCache(updatedParty.threadId, updatedParty);
+    }
+
+    publishDashboardEvent('registration:removed', partyId, {
+      userId: targetUserId,
+      roleNumber: removedRole.roleNumber,
+      roleName: removedRole.roleName,
+      organizerId,
+    });
+
+    return {
+      success: true,
+      message: `<@${targetUserId}> has been removed from ${removedRole.roleName.toUpperCase()} by <@${organizerId}>.`,
+      party: updatedParty,
+      action: 'REMOVED',
+      roleNumber: removedRole.roleNumber,
+      roleName: removedRole.roleName,
+    };
+  } catch (error) {
+    logger.error({ error, partyId, organizerId, targetUserId, roleNumber }, 'Error in organizerRemoveRole');
+    throw error;
+  }
+}

@@ -1,6 +1,13 @@
 import { Message } from 'discord.js';
 import { getPartyByThreadId } from '../services/partyService';
-import { registerUserForRole, unregisterUser, RoleFullError } from '../services/registrationService';
+import {
+  registerUserForRole,
+  unregisterUser,
+  organizerAssignRole,
+  organizerRemoveRole,
+  RoleFullError,
+} from '../services/registrationService';
+import { isOrganizerOrAdmin } from '../services/permissionService';
 import { parseRegistrationMessage } from '../validation/registrationSchemas';
 import { updatePartyAnnouncementMessage } from '../services/threadService';
 import { RegistrationTracker } from '../utils/registrationMetrics';
@@ -183,7 +190,212 @@ export async function handleMessageCreate(message: Message): Promise<void> {
       return;
     }
 
-    // 9. UNREGISTER REQUEST ('-')
+    // ==========================================
+    // 9. ORGANIZER REGISTRATION MANAGEMENT POWERS
+    // ==========================================
+    if (parsed.isOrganizerCommand) {
+      // 9.1 AUTHORIZATION CHECK: Check if caller is party host or authorized organizer
+      const isAuthorized = await isOrganizerOrAdmin({
+        partyId: party.id,
+        organizerId: party.organizerId,
+        guildId,
+        userId,
+        member: message.member,
+      });
+
+      if (!isAuthorized) {
+        logger.warn({
+          incomingMessageId: message.id,
+          callerId: userId,
+          partyId: party.id,
+          partyOrganizerId: party.organizerId,
+          command: message.content,
+        }, '🚫 [ORGANIZER COMMAND PERMISSION DENIED]');
+
+        await message.reply({
+          content: `<@${userId}>\n**PERMISSION DENIED**\n\`Only the party host or an authorized organizer can manage member registrations.\``,
+        }).catch(() => {});
+        tracker.markConfirmationSent();
+        tracker.logCriticalPathOnly('PERMISSION_DENIED');
+        return;
+      }
+
+      // 9.2 TARGET RESOLUTION
+      let targetUserId = parsed.targetUserId;
+      if (!targetUserId && message.mentions && message.mentions.users) {
+        const nonBotTarget = message.mentions.users.find((u) => u.id !== botUserId);
+        if (nonBotTarget) {
+          targetUserId = nonBotTarget.id;
+        }
+      }
+
+      // If missing target member, prompt clearly
+      if (!targetUserId) {
+        const actionWord = parsed.organizerAction === 'REMOVE' ? 'remove' : 'assign';
+        const signChar = parsed.organizerAction === 'REMOVE' ? '-' : '+';
+        await message.reply({
+          content: `<@${userId}>\n**TARGET REQUIRED**\n\`Please mention the member you want to ${actionWord} (e.g. @Raid Master ${signChar}${parsed.roleNumber} @user).\``,
+        }).catch(() => {});
+        tracker.markConfirmationSent();
+        tracker.logCriticalPathOnly('MISSING_TARGET');
+        return;
+      }
+
+      // Target must not be a bot
+      const targetUserObj = message.mentions.users?.get(targetUserId);
+      if (targetUserObj?.bot) {
+        await message.reply({
+          content: `<@${userId}>\n**INVALID TARGET**\n\`Bots cannot be registered for party roles.\``,
+        }).catch(() => {});
+        tracker.markConfirmationSent();
+        tracker.logCriticalPathOnly('INVALID_TARGET');
+        return;
+      }
+
+      // Send typing indicator right before DB write
+      message.channel.sendTyping().catch(() => {});
+
+      if (parsed.organizerAction === 'ASSIGN') {
+        try {
+          const result = await organizerAssignRole({
+            partyId: party.id,
+            organizerId: userId,
+            targetUserId,
+            roleNumber: parsed.roleNumber!,
+            guildId,
+            cachedParty: party,
+          });
+
+          tracker.markDbTransactionCompleted(result.action, result.roleNumber);
+
+          logger.info({
+            incomingMessageId: message.id,
+            partyId: party.id,
+            organizerId: userId,
+            targetUserId,
+            action: result.action,
+            roleNumber: result.roleNumber,
+            roleName: result.roleName,
+            success: result.success,
+            errorReason: result.errorReason || null,
+          }, '💾 [DB TRANSACTION RESULT: ORGANIZER_ASSIGN]');
+
+          if (result.success) {
+            await message.reply({ content: result.message });
+            tracker.markConfirmationSent();
+
+            if (result.action !== 'ALREADY_REGISTERED') {
+              updatePartyAnnouncementMessage(message.client, result.party)
+                .then(() => tracker.markAnnouncementUpdated())
+                .catch((err) => logger.warn({ err }, 'Async announcement update failed'));
+            }
+          } else {
+            let errorContent: string;
+            if (result.errorReason === 'ROLE_FULL') {
+              errorContent = `<@${userId}>\n**ROLE FULL**\n\`${result.message}\``;
+            } else if (result.errorReason === 'PARTY_NOT_OPEN') {
+              errorContent = `<@${userId}>\n**PARTY CLOSED**\n\`Registration is currently closed for this party.\``;
+            } else {
+              errorContent = `<@${userId}>\n**INVALID ROLE**\n\`${result.message}\``;
+            }
+            await message.reply({ content: errorContent });
+            tracker.markConfirmationSent();
+            tracker.logCriticalPathOnly(result.errorReason || 'REJECTED');
+          }
+        } catch (error) {
+          if (error instanceof RoleFullError) {
+            await message.reply({
+              content: `<@${userId}>\n**ROLE FULL**\n\`${error.message}\``,
+            }).catch(() => {});
+            tracker.markConfirmationSent();
+            tracker.logCriticalPathOnly('ROLE_FULL');
+            return;
+          }
+
+          logger.error({
+            error,
+            stack: error instanceof Error ? error.stack : undefined,
+            partyId: party.id,
+            organizerId: userId,
+            targetUserId,
+            roleNumber: parsed.roleNumber,
+            incomingMessageId: message.id,
+          }, '❌ [REGISTRATION PROCESSING ERROR: ORGANIZER_ASSIGN]');
+
+          await message.reply({
+            content: `<@${userId}>\n**ERROR**\n\`An error occurred while assigning the role. Please try again.\``,
+          }).catch(() => {});
+          tracker.logCriticalPathOnly('ERROR');
+        }
+        return;
+      }
+
+      if (parsed.organizerAction === 'REMOVE') {
+        try {
+          const result = await organizerRemoveRole({
+            partyId: party.id,
+            organizerId: userId,
+            targetUserId,
+            roleNumber: parsed.roleNumber!,
+            guildId,
+            cachedParty: party,
+          });
+
+          tracker.markDbTransactionCompleted(result.action, result.roleNumber);
+
+          logger.info({
+            incomingMessageId: message.id,
+            partyId: party.id,
+            organizerId: userId,
+            targetUserId,
+            action: result.action,
+            roleNumber: result.roleNumber,
+            roleName: result.roleName,
+            success: result.success,
+            errorReason: result.errorReason || null,
+          }, '💾 [DB TRANSACTION RESULT: ORGANIZER_REMOVE]');
+
+          if (result.success) {
+            await message.reply({ content: result.message });
+            tracker.markConfirmationSent();
+
+            updatePartyAnnouncementMessage(message.client, result.party)
+              .then(() => tracker.markAnnouncementUpdated())
+              .catch((err) => logger.warn({ err }, 'Async announcement update failed'));
+          } else {
+            let errorContent: string;
+            if (result.errorReason === 'NOT_REGISTERED') {
+              errorContent = `<@${userId}>\n**NOT REGISTERED**\n\`${result.message}\``;
+            } else if (result.errorReason === 'WRONG_ROLE') {
+              errorContent = `<@${userId}>\n**ROLE MISMATCH**\n\`${result.message}\``;
+            } else {
+              errorContent = `<@${userId}>\n**INVALID ROLE**\n\`${result.message}\``;
+            }
+            await message.reply({ content: errorContent });
+            tracker.markConfirmationSent();
+            tracker.logCriticalPathOnly(result.errorReason || 'REJECTED');
+          }
+        } catch (error) {
+          logger.error({
+            error,
+            stack: error instanceof Error ? error.stack : undefined,
+            partyId: party.id,
+            organizerId: userId,
+            targetUserId,
+            roleNumber: parsed.roleNumber,
+            incomingMessageId: message.id,
+          }, '❌ [REGISTRATION PROCESSING ERROR: ORGANIZER_REMOVE]');
+
+          await message.reply({
+            content: `<@${userId}>\n**ERROR**\n\`An error occurred while removing the registration. Please try again.\``,
+          }).catch(() => {});
+          tracker.logCriticalPathOnly('ERROR');
+        }
+        return;
+      }
+    }
+
+    // 10. UNREGISTER REQUEST ('-')
     if (parsed.isUnregister) {
       // Send typing indicator right before DB write
       message.channel.sendTyping().catch(() => {});
