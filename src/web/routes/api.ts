@@ -12,17 +12,23 @@ import {
   getPartyDetails,
 } from '../services/analyticsService';
 import { getBotProfile } from '../services/discordUserService';
+import { getSystemHealth } from '../../services/systemState';
 import { logger } from '../../utils/logger';
 
 export const apiRouter = Router();
 
-// Health Check
-apiRouter.get('/health', (_req: Request, res: Response) => {
-  res.json({
-    status: 'ok',
-    service: 'discord-raid-master',
-    timestamp: new Date().toISOString(),
-  });
+// Root HEAD handler so monitors pinging the domain root get immediate 200 OK without heavy file reads
+apiRouter.head('/', (_req: Request, res: Response) => {
+  res.status(200).end();
+});
+
+// Health Check (Supports both GET and HEAD requests with diagnostic status)
+apiRouter.all('/health', (req: Request, res: Response) => {
+  if (req.method === 'HEAD') {
+    return res.status(200).end();
+  }
+  const health = getSystemHealth();
+  return res.status(200).json(health);
 });
 
 // Authenticated Discord User / Bot Context
